@@ -13,7 +13,7 @@ Generating the image...
 
 This is the image that was generated. The horizontal axis is time (in seconds). The vertical axis is frequency (in Hz). The colors represent sound intensities - blue is quiet, yellow is loud.
 
-[joker.png]
+![joker.png](joker.png)
 
 It's the spectrum of the song 'Why So Serious?' by Hans Zimmer and James Newton Howard, from the movie 'The Dark Knight'.
 
