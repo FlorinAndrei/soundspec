@@ -1,6 +1,8 @@
 # soundspec
 spectrum visualizer for audio files
 
+As of right now, the app works, feel free to give it a try. But it's not quite finished yet, so it might be rough around the edges. I hope to release v1.0 in a few days.
+
 ## Output example
 Here's an output sample from running the app on a WAV file:
 
