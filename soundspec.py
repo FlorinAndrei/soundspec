@@ -4,18 +4,21 @@ from scipy.io import wavfile
 from scipy import signal
 import numpy as np
 import matplotlib.pyplot as plt
+import argparse
 import sys
 
 # common sense limits for frequency
 fmin = 10
 fmax = 20000
 
-if len(sys.argv) != 2:
-  print('Usage:', sys.argv[0], 'file.wav')
-  sys.exit(1)
+argpar = argparse.ArgumentParser(description="generate spectrogram from sound file")
+argpar.add_argument('-b', '--batch', help='batch run, no display, save image to disk', action='store_true')
+argpar.add_argument('audiofile', type=str, help='audio file to process')
+
+args = argpar.parse_args()
 
 print('Reading the audio file...')
-sf, audio = wavfile.read(sys.argv[1])
+sf, audio = wavfile.read(args.audiofile)
 
 if sf < fmin:
   print('Sampling frequency too low.')
@@ -86,4 +89,7 @@ yt = yt.tolist()
 plt.yticks(yt)
 
 plt.grid(True)
-plt.show()
+if args.batch:
+  plt.savefig(args.audiofile + '.png')
+else:
+  plt.show()
