@@ -90,6 +90,6 @@ plt.yticks(yt)
 
 plt.grid(True)
 if args.batch:
-  plt.savefig(args.audiofile + '.png')
+  plt.savefig(args.audiofile + '.png', dpi=200)
 else:
   plt.show()
