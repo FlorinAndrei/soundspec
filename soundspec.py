@@ -7,11 +7,16 @@ import matplotlib.pyplot as plt
 import argparse
 import sys
 
+# only needed for pyinstaller bug workaround
+import numpy.random.common
+import numpy.random.bounded_integers
+import numpy.random.entropy
+
 # common sense limits for frequency
 fmin = 10
 fmax = 20000
 
-argpar = argparse.ArgumentParser(description="generate spectrogram from sound file")
+argpar = argparse.ArgumentParser(description="soundspec v0.1 - generate spectrogram from sound file")
 argpar.add_argument('-b', '--batch', help='batch run, no display, save image to disk', action='store_true')
 argpar.add_argument('audiofile', type=str, help='audio file to process')
 
