@@ -17,7 +17,7 @@ This is the image that was generated. The horizontal axis is time (in seconds). 
 
 It's the spectrum of the song 'Why So Serious?' by Hans Zimmer and James Newton Howard, from the movie 'The Dark Knight'.
 
-The song is semi-famous among "audiophile" enthusiasts, where it is considered a good test of bass response for audio systems. The portion of interest begins shortly after 200 sec (3 min 24 sec, more or less). You can see a lot of energy is focused between 30 Hz and 40 Hz. While pretty low, these are not actually extremely low frequencies. If your speakers or headphones can play those notes, they are alright.
+The song is semi-famous among "audiophile" enthusiasts, where it is considered a good test of bass response for audio systems. The portion of interest begins shortly after 200 sec (3 min 24 sec, more or less). You can see a lot of energy is focused between 30 Hz and 40 Hz. While pretty low, these are not actually extremely low frequencies - there are songs out there with deeper bass, closer to 20 Hz in some cases. But if your speakers or headphones can play those notes, they are alright.
 
 ## Technical explanation
 The app will take any WAV file as input. It performs the fast Fourier transform (FFT) to generate the spectrum of the whole file. The spectrum is then displayed.
