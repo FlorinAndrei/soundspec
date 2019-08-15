@@ -10,6 +10,6 @@ for %%f in (%1\*) do (
   echo:
   echo %%f
   ffmpeg -loglevel warning -nostdin -i "%%f" "%%f".wav
-  soundspec.py -b "%%f".wav
+  soundspec.exe -b "%%f".wav
   del "%%f".wav
 )
