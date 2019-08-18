@@ -1,5 +1,5 @@
 # soundspec
-spectrum visualizer for audio files
+spectrum visualizer for audio files; uses the Fourier transform
 
 Requires Python 3 and a few typical number crunching modules. Install the modules and run the `soundspec.py` script as is. It should be self-explanatory. Only works on WAV files, so use VLC or ffmpeg to convert your file to WAV first.
 
