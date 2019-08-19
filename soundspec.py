@@ -31,12 +31,21 @@ if sf < fmin:
 
 # convert to mono
 sig = np.mean(audio, axis=1)
+
+# vertical resolution (frequency)
 # number of points per segment; more points = better frequency resolution
 # if equal to sf, then frequency resolution is 1 Hz
 npts = int(sf)
 
+# horizontal resolution (time)
+# fudge factor to keep the number of frequency samples close to 1000
+# (assuming an image width of about 1000 px)
+# negative values ought to be fine
+# this needs to change if image size becomes parametrized
+winfudge = 1 - ((np.shape(sig)[0] / sf) / 1000)
+
 print('Calculating FFT...')
-f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts)
+f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=int(winfudge * npts))
 
 # FFT at high resolution makes way too many frequencies
 # set some lower number of frequencies we would like to keep
