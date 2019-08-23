@@ -2,7 +2,7 @@
 
 if "%~1"=="" (goto usage) else (goto execute)
 :usage
-echo "Usage: %0 C:\path\to\files"
+echo Usage: %0 "C:\path\to\files"
 GOTO:EOF
 
 :execute
