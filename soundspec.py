@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 from scipy.io import wavfile
 from scipy import signal
 import numpy as np
