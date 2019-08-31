@@ -94,6 +94,7 @@ plt.yscale('symlog')
 plt.ylim(fmin, fmax)
 
 # TODO: make this depend on fmin / fmax
+# right now I'm assuming a range close to 10 - 20000
 yt = np.arange(10, 100, 10)
 yt = np.concatenate((yt, 10 * yt, 100 * yt, 1000 * yt))
 yt = yt[yt <= fmax]
