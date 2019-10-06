@@ -17,7 +17,7 @@ Within the archive you'll find two executables: `soundspec.exe` and `soundspec-b
 
 ### Analyzing one file at a time
 
-`soundspec.exe` is for making the spectrum of a single file. It only works on WAV files. Example:
+`soundspec.exe` is for making the spectrum of a one or more files. It only works on WAV files. Example:
 
 ```
 soundspec.exe "C:\Users\darkstar\Music\latest hit.wav"
@@ -45,14 +45,37 @@ It will take a few seconds to analyze each song. Next to the songs you'll find P
 
 There's no GUI at all in batch mode. Almost any audio file format is supported in this mode, including MP3, M4A, FLAC, etc. Feel free to mix and match different file types.
 
+## For Ubuntu users
+
+Install any missing python 3 libraries, e.g. scipy and numpy, as follows:
+
+```
+sudo apt install python3-scipy
+sudo apt install python3-numpy
+```
+
+### Analyzing one or more files at a time
+
+`soundspec.py` is for making the spectrogram of one or more files. It only works on WAV files. Example:
+
+```
+python3 soundspec.py "/home/darkstar/Music/latest hit.wav"
+python3 soundspec.py "/home/darkstar/Music/*.wav"
+```
+
+You must run it from a unix shell. Open a terminal application, navigate to the place where you've extracted the zip archive, and run the app as shown above. Provide the full path to the music file, and use double quotes if the path names contains any blanks.
+
+
+
 ## Output example
 Here's an output sample from running the app on a WAV file:
 
 ```
 $ ./soundspec.py joker.wav 
-Reading the audio file...
-Calculating FFT...
-Generating the image...
+joker.wav: reading ...
+joker.wav: processing ...
+joker.wav: calculating FFT ...
+joker.wav: generating the image ...
 ```
 
 This is the image that was generated. The horizontal axis is time (in seconds). The vertical axis is frequency (in Hz). The colors represent sound intensities - blue is quiet, yellow is loud.
@@ -68,3 +91,7 @@ The song is semi-famous among "audiophile" enthusiasts, where it is considered a
 Discussion thread about this app on the Audio Science Review forum:
 
 https://www.audiosciencereview.com/forum/index.php?threads/simple-app-to-visualize-the-spectrum-of-a-whole-song-or-many-songs-in-batch-mode-from-start-to-end-in-one-image-bonus-remember-why-so-serious.8462/
+
+### Multiprocessing
+
+To speed up creation of multiple spectrograms in batchmode soundspec uses all available CPU cores to process the data in parallel (reading is not parallelized). If there are many big audio files the memory may not be sufficient. In this case run soundspec with option -s to force single processing mode.
