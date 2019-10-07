@@ -3,7 +3,6 @@ from scipy import signal
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse
-import sys
 import multiprocessing 
 import os.path
 
@@ -25,12 +24,14 @@ def main():
 ####################################################################################
 
 def get_argument_parser():
-    argpar = argparse.ArgumentParser(description="soundspec v0.1.2 - generate spectrogram from sound file")
-
+    argpar = argparse.ArgumentParser(description="soundspec v0.1.3 - generate spectrogram from sound file")
+    num_cores_avail = multiprocessing.cpu_count()
+    
     # add options:
     argpar.add_argument('-b', '--batch', help='batch run, no display, save image to disk', action='store_true')
-    argpar.add_argument('-s', '--singleproc', action='store_true', dest='forceSingleProcessing', default=False,
-                        help='force single processing in batch mode on system with multiple cores (use if not enough memory)')
+    argpar.add_argument('-c', type=int, dest='num_cores', default = num_cores_avail,
+                        help='number of cores to use, default is ' + str(num_cores_avail) + 
+                        ' (set to smaller value if not enough memory, or to 1 to force single core processing)')
 
     # add arguments:
     argpar.add_argument('audiofile', type=str, nargs='+', help='audio file (WAV) to process')
@@ -43,6 +44,10 @@ class SoundSpec:
   
     def __init__(self, options):
         self.args = options
+        if not self.args.batch:
+            self.args.num_cores = 1 # force single core processing when not in batch mode
+        self.read_file_lock = None
+        self.print_lock = None
         
         # common sense limits for frequency
         self.fmin = 10
@@ -55,30 +60,29 @@ class SoundSpec:
 
     def process(self):
         num_files = len(self.args.audiofile)
-        if num_files > 0 and not self.args.forceSingleProcessing and self.args.batch == True:
+        if num_files > 0 and self.args.num_cores > 1:
             num_errors = self.process_files_multi_process(self.args.audiofile)
         else:
             num_errors = self.process_files_single_process(self.args.audiofile)
         if num_errors > 0:
-            print('failed for ' + str(num_errors) + ' of ' + str(num_files) + ' files.')
+            self.log_message('failed for ' + str(num_errors) + ' of ' + str(num_files) + ' files.')
         else:
             if num_files > 1:
-                print('succeeded for ' + str(num_files) + ' files')
+                self.log_message('succeeded for ' + str(num_files) + ' files')
                 
+    #-------------------------------------------------------------------------------
+
     def process_files_multi_process(self, audiofiles):
-        num_cpus = multiprocessing.cpu_count()
         process_list = []
         num_errors = 0
             
-        with multiprocessing.Pool(num_cpus) as pool:
+        my_read_file_lock = multiprocessing.Lock()
+        my_print_lock = multiprocessing.Lock()
+        
+        with multiprocessing.Pool(self.args.num_cores, initializer=self.initialize_locks, initargs=(my_read_file_lock,my_print_lock,)) as pool:
             for audiofile in audiofiles:
-                if os.path.exists(audiofile):
-                    process_data = self.read_file(audiofile)
-                    process = pool.apply_async(self.process_file, (process_data,))
-                    process_list.append(process)
-                else:
-                    print(audiofile + ': not found')
-                    num_errors += 1
+                process = pool.apply_async(self.process_file, (audiofile,))
+                process_list.append(process)
 
             for process in process_list:
                 num_errors += process.get()
@@ -89,48 +93,58 @@ class SoundSpec:
     def process_files_single_process(self, audiofiles):
         num_errors = 0
         for audiofile in audiofiles:
-            if os.path.exists(audiofile):
-                process_data = self.read_file(audiofile)
-                num_errors += self.process_file(process_data)
-            else:
-                print(audiofile + ': not found')
-                num_errors += 1
+            num_errors += self.process_file(audiofile)
         return num_errors
-
 
     #-------------------------------------------------------------------------------
 
-    def read_file(self, audiofile):
-        print(audiofile + ': reading ...')
-        process_data = ProcessData(audiofile)
-        process_data.sf, process_data.audio = wavfile.read(audiofile)
-        return process_data
-      
+    def initialize_locks(self, read_file_lock, print_lock):
+        self.read_file_lock = read_file_lock
+        self.print_lock = print_lock # multiprocessing.Lock()
 
-    def process_file(self, process_data):
-        print(process_data.audiofile + ': processing ...')
 
-        if process_data.sf < self.fmin:
-          print(process_data.audiofile + ': Sampling frequency too low.')
+    def process_file(self, audiofile):
+        # read the file
+        # - use a lock to prevent concurrent reads 
+        if self.read_file_lock:
+            self.read_file_lock.acquire()
+        try:
+            if not os.path.exists(audiofile):
+                self.log_message(audiofile + ': not found')
+                return 1
+            self.log_message(audiofile + ': reading ...')
+            sf, audio = wavfile.read(audiofile)
+        except:
+            self.log_message(audiofile + ': error reading audio data')
+            return 1
+        finally:
+            if self.read_file_lock:
+                self.read_file_lock.release()
+        # starting from here the code runs concurrently in batch mode
+        
+        if sf < self.fmin:
+          self.log_message(audiofile + ': Sampling frequency too low')
           return 1
 
+        self.log_message(audiofile + ': processing ...')
+
         # convert to mono
-        sig = np.mean(process_data.audio, axis=1)
+        sig = np.mean(audio, axis=1)
 
         # vertical resolution (frequency)
         # number of points per segment; more points = better frequency resolution
         # if equal to sf, then frequency resolution is 1 Hz
-        npts = int(process_data.sf)
+        npts = int(sf)
 
         # horizontal resolution (time)
         # fudge factor to keep the number of frequency samples close to 1000
         # (assuming an image width of about 1000 px)
         # negative values ought to be fine
         # this needs to change if image size becomes parametrized
-        winfudge = 1 - ((np.shape(sig)[0] / process_data.sf) / 1000)
+        winfudge = 1 - ((np.shape(sig)[0] / sf) / 1000) # TODO: should we replace 1000 by self.nf?
 
-        print(process_data.audiofile + ': calculating FFT ...')
-        f, t, Sxx = signal.spectrogram(sig, process_data.sf, nperseg=npts, noverlap=int(winfudge * npts))
+        self.log_message(audiofile + ': calculating FFT ...')
+        f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=int(winfudge * npts))
 
         # generate an exponential distribution of frequencies
         # (as opposed to the linear distribution from FFT)
@@ -169,7 +183,7 @@ class SoundSpec:
         Sxxnew = Sxx[findex, :]
         Sxx = Sxxnew
 
-        print(process_data.audiofile + ': generating the image ...')
+        self.log_message(audiofile + ': generating the image ...')
         plt.pcolormesh(t, f, np.log10(Sxx))
         plt.ylabel('f [Hz]')
         plt.xlabel('t [sec]')
@@ -186,18 +200,25 @@ class SoundSpec:
 
         plt.grid(True)
         if self.args.batch:
-            image_file = process_data.audiofile + '.png'
-            print(process_data.audiofile + ': create spectrogram ' + image_file)
+            image_file = audiofile + '.png'
+            self.log_message(audiofile + ': create spectrogram ' + image_file)
             plt.savefig(image_file, dpi=200)
         else:
             plt.show()
         return 0
 
+    #-------------------------------------------------------------------------------
 
-class ProcessData:
-        def __init__(self, filename):
-          self.audiofile = filename
+    def log_message(self, msg):
+        if self.print_lock:
+            self.print_lock.acquire()
+        try:
+            print(msg)
+        finally:
+            if self.print_lock:
+                self.print_lock.release()
 
+          
 ####################################################################################
 
 if __name__ == "__main__":

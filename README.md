@@ -94,4 +94,4 @@ https://www.audiosciencereview.com/forum/index.php?threads/simple-app-to-visuali
 
 ### Multiprocessing
 
-To speed up creation of multiple spectrograms in batchmode soundspec uses all available CPU cores to process the data in parallel (reading is not parallelized). If there are many big audio files the memory may not be sufficient. In this case run soundspec with option -s to force single processing mode.
+To speed up creation of multiple spectrograms in batch mode `soundspec` uses all available CPU cores to process the data in parallel. Reading is not parallelized but running many cores at the same time means that also the audio data for each core must be held in memory at the same time. If there are many large audio files the memory may not be sufficient. In this case run `soundspec` with option `-c <N>` to use only <N> cores or `-c 1` to force single processing mode.
