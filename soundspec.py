@@ -6,6 +6,7 @@ import argparse
 import multiprocessing 
 import os.path
 
+
 # only needed for pyinstaller bug workaround
 #import numpy.random.common
 #import numpy.random.bounded_integers
@@ -34,7 +35,8 @@ def get_argument_parser():
                         ' (set to smaller value if not enough memory, or to 1 to force single core processing)')
 
     # add arguments:
-    argpar.add_argument('audiofile', type=str, nargs='+', help='audio file (WAV) to process')
+    argpar.add_argument('audiofile', type=str, nargs='+', 
+                        help='audio file (WAV) to process, or a directory containing audio files')
 
     return argpar
         
@@ -59,11 +61,12 @@ class SoundSpec:
         self.nf = 1000
 
     def process(self):
-        num_files = len(self.args.audiofile)
+        audio_files = self.get_list_of_files(self.args.audiofile)
+        num_files = len(audio_files)
         if num_files > 0 and self.args.num_cores > 1:
-            num_errors = self.process_files_multi_process(self.args.audiofile)
+            num_errors = self.process_files_multi_process(audio_files)
         else:
-            num_errors = self.process_files_single_process(self.args.audiofile)
+            num_errors = self.process_files_single_process(audio_files)
         if num_errors > 0:
             self.log_message('failed for ' + str(num_errors) + ' of ' + str(num_files) + ' files.')
         else:
@@ -72,6 +75,19 @@ class SoundSpec:
                 
     #-------------------------------------------------------------------------------
 
+    def get_list_of_files(self, audiofiles):
+        list_of_files = []
+        for file in audiofiles:
+            if os.path.isdir(file):
+                self.add_files_in_dir(file, list_of_files)
+            else:
+                if self.is_audio_file(file):
+                    list_of_files.append(file)
+                else:
+                    self.log_message('ignored file ' + file + ': file type not supported or no audio file')
+        return list_of_files
+    
+    
     def process_files_multi_process(self, audiofiles):
         process_list = []
         num_errors = 0
@@ -98,6 +114,22 @@ class SoundSpec:
 
     #-------------------------------------------------------------------------------
 
+    def add_files_in_dir(self, directory, list_of_files):
+        for root, dirs, files in os.walk(directory, topdown = True):
+            for name in files:
+                if self.is_audio_file(name):
+                    path = os.path.join(root, name)
+                    list_of_files.append(path)
+        
+
+    def is_audio_file(self, filename):
+        known_extensions = ('wav',)
+        for ext in known_extensions:
+            if filename.lower().endswith(ext):
+                return True
+        return False
+    
+    
     def initialize_locks(self, read_file_lock, print_lock):
         self.read_file_lock = read_file_lock
         self.print_lock = print_lock # multiprocessing.Lock()
@@ -201,7 +233,7 @@ class SoundSpec:
         plt.grid(True)
         if self.args.batch:
             image_file = audiofile + '.png'
-            self.log_message(audiofile + ': create spectrogram ' + image_file)
+            self.log_message(audiofile + ': create spectrogram ' + os.path.basename(image_file))
             plt.savefig(image_file, dpi=200)
         else:
             plt.show()

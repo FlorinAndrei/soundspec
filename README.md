@@ -56,14 +56,18 @@ sudo apt install python3-numpy
 
 ### Analyzing one or more files at a time
 
-`soundspec.py` is for making the spectrogram of one or more files. It only works on WAV files. Example:
+`soundspec.py` is for making spectrograms of audio files. It only works on WAV files. Examples:
 
 ```
 python3 soundspec.py "/home/darkstar/Music/latest hit.wav"
 python3 soundspec.py "/home/darkstar/Music/*.wav"
+python3 soundspec.py "/home/darkstar/Music/"
 ```
 
-You must run it from a unix shell. Open a terminal application, navigate to the place where you've extracted the zip archive, and run the app as shown above. Provide the full path to the music file, and use double quotes if the path names contains any blanks.
+You must run it from a unix shell:
+- Open a terminal application, navigate to the place where you've extracted the zip archive, and run the app as shown above. 
+- Provide the full path to audio files or to folders containing audio files. If you provide a folder soundspec will process all audio files in this folders and all its subfolders.
+- Use double quotes if the path names contain any blanks.
 
 
 
