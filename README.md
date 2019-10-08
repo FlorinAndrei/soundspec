@@ -47,29 +47,33 @@ There's no GUI at all in batch mode. Almost any audio file format is supported i
 
 ## For Ubuntu users
 
-Install any missing python 3 libraries, e.g. scipy and numpy, as follows:
+Install any missing `python 3` libraries, e.g. `scipy` and `numpy`, as follows:
 
 ```
 sudo apt install python3-scipy
 sudo apt install python3-numpy
 ```
 
-### Analyzing one or more files at a time
-
-`soundspec.py` is for making spectrograms of audio files. It only works on WAV files. Examples:
+Install `ffmpeg` (without it only WAV files are supported):
 
 ```
-python3 soundspec.py "/home/darkstar/Music/latest hit.wav"
-python3 soundspec.py "/home/darkstar/Music/*.wav"
-python3 soundspec.py "/home/darkstar/Music/"
+sudo apt install ffmpeg
+```
+
+### Analyzing files
+
+`soundspec.py` is for making spectrograms of audio files. It works on many different file types if `ffmpeg` is installed. Examples:
+
+```
+./soundspec.py "/home/darkstar/Music/latest hit.wav"
+./soundspec.py -b "/home/darkstar/Music/*.mp3"
+./soundspec.py -b -c4 "/home/darkstar/Music/"
 ```
 
 You must run it from a unix shell:
 - Open a terminal application, navigate to the place where you've extracted the zip archive, and run the app as shown above. 
-- Provide the full path to audio files or to folders containing audio files. If you provide a folder soundspec will process all audio files in this folders and all its subfolders.
+- Provide the full path to audio files or to folders containing audio files. If you provide a folder `soundspec` processes all audio files in this folders and all its nested subfolders.
 - Use double quotes if the path names contain any blanks.
-
-
 
 ## Output example
 Here's an output sample from running the app on a WAV file:

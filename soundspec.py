@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from scipy.io import wavfile
 from scipy import signal
 import numpy as np
@@ -5,7 +7,8 @@ import matplotlib.pyplot as plt
 import argparse
 import multiprocessing 
 import os.path
-
+import os
+import subprocess
 
 # only needed for pyinstaller bug workaround
 #import numpy.random.common
@@ -59,6 +62,20 @@ class SoundSpec:
         # set some lower number of frequencies we would like to keep
         # final result will be even smaller after pruning
         self.nf = 1000
+        self.known_extensions = ['.wav']  # WAV files
+
+        # settings for ffmpeg
+        self.ffmpeg = 'ffmpeg'  # set full path to ffmpeg if required 
+        self.ffmpeg_loglevel = 'error'
+        if self.ffmpeg != None:
+            # add all file types handled by ffmpeg: (incomplete)
+            self.known_extensions.append('.flac')
+            self.known_extensions.append('.mp3')
+            self.known_extensions.append('.mp4')
+            self.known_extensions.append('.mkv')
+            self.known_extensions.append('.avi')
+            self.known_extensions.append('.ogg')
+
 
     def process(self):
         audio_files = self.get_list_of_files(self.args.audiofile)
@@ -123,9 +140,9 @@ class SoundSpec:
         
 
     def is_audio_file(self, filename):
-        known_extensions = ('wav',)
-        for ext in known_extensions:
-            if filename.lower().endswith(ext):
+        root, ext = os.path.splitext(filename)
+        for known_ext in self.known_extensions:
+            if ext.lower() == known_ext:
                 return True
         return False
     
@@ -137,21 +154,36 @@ class SoundSpec:
 
     def process_file(self, audiofile):
         # read the file
-        # - use a lock to prevent concurrent reads 
+        # - use a lock to prevent concurrent reads (if available)
         if self.read_file_lock:
             self.read_file_lock.acquire()
+        wav_file = None
         try:
             if not os.path.exists(audiofile):
                 self.log_message(audiofile + ': not found')
                 return 1
             self.log_message(audiofile + ': reading ...')
-            sf, audio = wavfile.read(audiofile)
+            if self.is_wav_file(audiofile):
+                wav_file = audiofile
+            else:    
+                # convert audiofile into wav_file:
+                wav_file = self.convert_to_wav(audiofile)
+                if wav_file == None:
+                    return 1
+                if not os.path.exists(wav_file):
+                    self.log_message(audiofile + ': failed to convert into wav format')
+                    return 1
+                    
+            sf, audio = wavfile.read(wav_file)
         except:
             self.log_message(audiofile + ': error reading audio data')
             return 1
         finally:
+            if wav_file != None and wav_file != audiofile:
+                os.unlink(wav_file)
             if self.read_file_lock:
                 self.read_file_lock.release()
+                
         # starting from here the code runs concurrently in batch mode
         
         if sf < self.fmin:
@@ -240,6 +272,33 @@ class SoundSpec:
         return 0
 
     #-------------------------------------------------------------------------------
+
+    def is_wav_file(self, filename):
+        root, ext = os.path.splitext(filename)
+        if ext.lower() == '.wav':
+            return True
+        return False
+
+
+    def convert_to_wav(self, audiofile):
+        # convert audiofile into wav_file:
+        self.log_message(audiofile + ': converting into wav format ...')
+        wav_file = audiofile + '_tmp-soundspec.wav'
+        if os.path.exists(wav_file):
+            os.unlink(wav_file)
+        
+        try:
+            args = [self.ffmpeg, '-loglevel', self.ffmpeg_loglevel, '-nostdin', '-i', audiofile, wav_file]
+            completed_process = subprocess.run(args, capture_output=True, check=True)
+        except subprocess.SubprocessError as ex:
+            self.log_message(audiofile + ': failed to convert into wav format: ' + ex.stderr.decode())
+            return None
+        except:
+            self.log_message(audiofile + ': failed to convert into wav format: unknown exeption')
+            return None
+                    
+        return wav_file
+    
 
     def log_message(self, msg):
         if self.print_lock:
