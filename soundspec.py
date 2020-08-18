@@ -193,7 +193,7 @@ class SoundSpec:
         self.log_message(audiofile + ': processing ...')
 
         # convert to mono
-        sig = np.mean(audio, axis=1)
+        sig = np.mean(audio,axis = 1) if (audio.ndim>=2) else audio 
 
         # vertical resolution (frequency)
         # number of points per segment; more points = better frequency resolution
