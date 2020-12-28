@@ -75,6 +75,7 @@ class SoundSpec:
             self.known_extensions.append('.mkv')
             self.known_extensions.append('.avi')
             self.known_extensions.append('.ogg')
+            self.known_extensions.append('.webm')
 
 
     def process(self):
