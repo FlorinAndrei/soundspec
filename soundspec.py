@@ -175,7 +175,13 @@ class SoundSpec:
                     self.log_message(audiofile + ': failed to convert into wav format')
                     return 1
                     
-            sf, audio = wavfile.read(wav_file)
+            sf, audio = wavfile.read(wav_file) # sf = samplerate in Hz, audio.shape[] = #samples, [#channels (if > 1)]
+            num_samples = audio.shape[0]
+            num_channels = 1;
+            if len(audio.shape) > 1:
+                num_channels = audio.shape[1]
+            self.log_message(audiofile + ': ' + str(num_channels) + ' channel(s) at ' + str(sf) + ' kHz samplerate with ' + str(num_samples / sf) + ' s runtime')
+
         except:
             self.log_message(audiofile + ': error reading audio data')
             return 1
@@ -193,8 +199,11 @@ class SoundSpec:
 
         self.log_message(audiofile + ': processing ...')
 
-        # convert to mono
-        sig = np.mean(audio, axis=1)
+        if num_channels == 1:
+            sig = audio
+        else:
+            # convert to mono
+            sig = np.mean(audio, axis=1)
 
         # vertical resolution (frequency)
         # number of points per segment; more points = better frequency resolution
