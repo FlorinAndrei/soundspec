@@ -28,7 +28,7 @@ def main():
 ####################################################################################
 
 def get_argument_parser():
-    argpar = argparse.ArgumentParser(description="soundspec v0.1.3 - generate spectrogram from sound file")
+    argpar = argparse.ArgumentParser(description="soundspec v0.1.4 - generate spectrogram from sound file")
     num_cores_avail = multiprocessing.cpu_count()
     
     # add options:
