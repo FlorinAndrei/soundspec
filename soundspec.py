@@ -40,6 +40,7 @@ def get_argument_parser():
     argpar.add_argument('-d', '--debug', type=int, dest='debug_level', help='set debug level', default=0)
     argpar.add_argument('-l', '--linear', dest='use_linear_amplitude', help='use linear amplitude', action='store_true')
     argpar.add_argument('-m', '--maximum', dest='use_maximum', help='use maximum instead of skipping frequencies', action='store_true')
+    argpar.add_argument('-p', '--ppi', type=int, help='set print resolution for batch mode (default is 200)', default=200)
     argpar.add_argument('-r', '--resolution', type=int, help='set resolution (default is 1000)', default=1000)
 
     # add arguments:
@@ -229,6 +230,7 @@ class AudioFileReader:
                 self.read_file_lock.release()
         return sf, audio
 
+    #-------------------------------------------------------------------------------
 
     def is_wav_file(self, filename):
         root, ext = os.path.splitext(filename)
@@ -279,21 +281,20 @@ class SpectrogramCreator:
             return 1
 
         self.logger.log_message(audiofile + ': processing ...')
+        self.determine_max_freq_to_show(sf)
 
         # convert to mono
         sig = np.mean(audio,axis = 1) if (audio.ndim>=2) else audio 
 
-        self.logger.log_message(audiofile + ': calculating FFT ...')
         # vertical resolution (frequency)
         # number of points per segment; more points = better frequency resolution
         # if equal to sf, then frequency resolution is 1 Hz
         npts = int(sf)
 
         # horizontal resolution (time)
-        # fudge factor to keep the number of frequency samples close to 1000
-        # (assuming an image width of about 1000 px)
+        # fudge factor to keep the number of frequency samples close to self.nf
+        # (assuming an image width of about self.nf px)
         # negative values ought to be fine
-        # this needs to change if image size becomes parametrized
         num_samples = audio.shape[0]
         run_time = num_samples / sf
         winfudge = 1 - (run_time / self.nf)
@@ -303,6 +304,7 @@ class SpectrogramCreator:
         # - f = [0..sf/2], 
         # - t = [0.5 .. run_time-0.5],
         # - Sxx = array[f.size, t.size]
+        self.logger.log_message(audiofile + ': calculating FFT ...')
         f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=num_overlap, mode='magnitude')
         self.logger.debug_message(6, 'f.shape: ' + str(f.shape))
         self.logger.debug_message(6, 't.shape: ' + str(t.shape))
@@ -310,14 +312,7 @@ class SpectrogramCreator:
 
         # generate an exponential distribution of frequencies
         # (as opposed to the linear distribution from FFT)
-        b = self.fmin - 1
-        a = np.log10(self.fmax - self.fmin + 1) / (self.nf - 1)
-        freqs = np.empty(self.nf, int)
-        for i in range(self.nf):
-            freqs[i] = np.power(10, a * i) + b
-        # list of frequencies, exponentially distributed:
-        freqs = np.unique(freqs)    # remove duplicates
-        self.logger.debug_message(1, 'freqs.size: ' + str(freqs.size))
+        freqs = self.exponential_distribution_of_frequencies()
 
         # delete frequencies lower than fmin
         fnew = f[f >= self.fmin]
@@ -347,74 +342,11 @@ class SpectrogramCreator:
         f = np.asarray(fnew)
 
         if self.args.use_maximum:
-            findex_begin = []
-            findex_end = []
-            for i in range(freqs.size):
-                if i == 0:
-                    begin = 0                                       # at 1st point
-                    findex_begin.append(begin)
-
-                    end = self.get_mean(findex[0 : 2])              # geometric mean of 1st two points
-                    end = min(int(end + 0.5), findex[1] - 1)        # limit to valid range (no overlap with next range)
-                    end = max(end, 0)
-                    findex_end.append(end)
-                else:
-                    if i < (freqs.size - 1):
-                        begin = findex_end[i-1] + 1                 # at 1st point after previous range
-                        findex_begin.append(begin)
-
-                        end = self.get_mean(findex[i : i+2])        # geometric mean of current and next point
-                        end = min(int(end+0.5), findex[i+1] - 1)    # limit to valid range (no overlap with next range
-                        end = max(end, findex[i])
-                        findex_end.append(end)
-                    else:
-                        begin = findex_end[i-1] + 1                 # at 1st point after previous range
-                        findex_begin.append(begin)
-
-                        end = findex[i]                             # at last point
-                        findex_end.append(end)
-            self.logger.debug_message(6, findex_begin)
-            self.logger.debug_message(6, findex_end)
-
-            # sanity check
-            for i in range(freqs.size):
-                if findex_begin[i] > findex[i]:
-                    self.logger.log_message(audiofile + ': findex[' + str(i) + ']: begin error')
-                    return 1
-                if findex_end[i] < findex[i]:
-                    self.logger.log_message(audiofile + ': findex[' + str(i) + ']: end error')
-                    return 1
-                if i == 0:
-                    if findex_end[i] >= findex_begin[i+1]:
-                        self.logger.log_message(audiofile + ': findex[' + str(i) + ']: end overlap error')
-                        return 1
-                else:
-                    if i < (freqs.size - 1):
-                        if findex_begin[i] <= findex_end[i-1]:
-                            self.logger.log_message(audiofile + ': findex[' + str(i) + ']: begin overlap error')
-                            return 1
-                        if findex_end[i] >= findex_begin[i+1]:
-                            self.logger.log_message(audiofile + ': findex[' + str(i) + ']: end overlap error')
-                            return 1
-                    else:
-                        if findex_begin[i] <= findex_end[i-1]:
-                            self.logger.log_message(audiofile + ': findex[' + str(i) + ']: begin overlap error')
-                            return 1
-
-            self.logger.debug_message(2, 'Sxx.shape: ' + str(Sxx.shape))
-            maximum_spectra = np.empty((freqs.size, Sxx.shape[1]))  # 85 frequencies in 91 spectra
-            self.logger.debug_message(2, 'maximum_spectra.shape :' + str(maximum_spectra.shape))
-            for i in range(freqs.size):
-                # select those spectra which shall be used to find the maximum for each frequency
-                ssx_range = range(findex_begin[i], findex_end[i] + 1)
-                self.logger.debug_message(4, 'ssx_range             : ' + str(ssx_range))
-                selected_spectra = Sxx[ssx_range, :]
-                self.logger.debug_message(4, 'selected_spectra.shape: ' + str(selected_spectra.shape))
-                self.logger.debug_message(5, 'selected_spectra: ' + str(selected_spectra))
-                maximum_spectra[i] = np.amax(selected_spectra, axis=0)
-
-            Sxx = maximum_spectra
+            num_errors, Sxx = self.scale_down_with_maxima(freqs.size, findex, Sxx)
+            if num_errors > 0:
+                return 1
         else:
+            # strip unused frequencies from Sxx
             Sxxnew = Sxx[findex, :]
             Sxx = Sxxnew
 
@@ -423,41 +355,190 @@ class SpectrogramCreator:
             Sxx = np.log10(Sxx)
         self.logger.debug_message(3, 'Sxx:\n' + str(Sxx))
 
-        self.logger.log_message(audiofile + ': generating the image ...')
-        plt.pcolormesh(t, f, Sxx)
-        plt.ylabel('f [Hz]')
-        plt.xlabel('t [sec]')
-        plt.yscale('symlog')
-        plt.ylim(self.fmin, self.fmax)
-
-        # TODO: make this depend on fmin / fmax
-        # right now I'm assuming a range close to 10 - 20000
-        yt = np.arange(10, 100, 10)
-        yt = np.concatenate((yt, 10 * yt, 100 * yt, self.nf * yt))
-        yt = yt[yt <= self.fmax]
-        yt = yt.tolist()
-        plt.yticks(yt)
-
-        plt.grid(True)
-        if self.args.batch:
-            image_file = audiofile + '.png'
-            self.logger.log_message(audiofile + ': create spectrogram ' + os.path.basename(image_file))
-            plt.savefig(image_file, dpi=200)
-        else:
-            plt.show()
+        plotter = SpectrogramPlotter(self.args, self.fmin, self.fmax, self.logger)
+        plotter.plot_spectrogram(t, f, Sxx, audiofile)
         return 0
+    
+    #-------------------------------------------------------------------------------
+
+    def determine_max_freq_to_show(self, sf):
+        if sf >= 48000:
+            self.fmax = 22000
+        if sf >= 88000:
+            self.fmax = 40000
+        if sf >= 176000:
+            self.fmax = 80000
+        if sf >= 352000:
+            self.fmax = 160000
+        if sf >= 704000:
+            self.fmax = 320000
+
+
+    def exponential_distribution_of_frequencies(self):
+        # generate an exponential distribution of frequencies
+        # (as opposed to the linear distribution from FFT)
+        b = self.fmin - 1
+        a = np.log10(self.fmax - self.fmin + 1) / (self.nf - 1)
+        freqs = np.empty(self.nf, int)
+        for i in range(self.nf):
+            freqs[i] = np.power(10, a * i) + b
+        # list of frequencies, exponentially distributed:
+        freqs = np.unique(freqs)    # remove duplicates
+        self.logger.debug_message(1, 'freqs.size: ' + str(freqs.size))
+        return freqs
+    
+        
+    def scale_down_with_maxima(self, num_freqs, findex, Sxx):
+        # determine range for each frequency bin findex[i]
+        findex_begin = []
+        findex_end = []
+        for i in range(num_freqs):
+            if i == 0:
+                begin = 0                                       # at 1st point
+                findex_begin.append(begin)
+
+                end = self.get_mean(findex[0 : 2])              # geometric mean of 1st two points
+                end = min(int(end + 0.5), findex[1] - 1)        # limit to valid range (no overlap with next range)
+                end = max(end, 0)
+                findex_end.append(end)
+            else:
+                if i < (num_freqs - 1):
+                    begin = findex_end[i-1] + 1                 # at 1st point after previous range
+                    findex_begin.append(begin)
+
+                    end = self.get_mean(findex[i : i+2])        # geometric mean of current and next point
+                    end = min(int(end+0.5), findex[i+1] - 1)    # limit to valid range (no overlap with next range
+                    end = max(end, findex[i])
+                    findex_end.append(end)
+                else:
+                    begin = findex_end[i-1] + 1                 # at 1st point after previous range
+                    findex_begin.append(begin)
+
+                    end = findex[i]                             # at last point
+                    findex_end.append(end)
+        self.logger.debug_message(6, findex_begin)
+        self.logger.debug_message(6, findex_end)
+
+        # sanity check
+        num_errors = self.downscale_sanity_check(num_freqs, findex, findex_begin, findex_end)
+        if num_errors > 0:
+            return num_errors, None
+
+        self.logger.debug_message(2, 'Sxx.shape: ' + str(Sxx.shape))
+        maximum_spectra = np.empty((num_freqs, Sxx.shape[1]))  # 85 frequencies in 91 spectra
+        self.logger.debug_message(2, 'maximum_spectra.shape :' + str(maximum_spectra.shape))
+        for i in range(num_freqs):
+            # select those spectra which shall be used to find the maximum for each frequency
+            ssx_range = range(findex_begin[i], findex_end[i] + 1)
+            self.logger.debug_message(4, 'ssx_range             : ' + str(ssx_range))
+            selected_spectra = Sxx[ssx_range, :]
+            self.logger.debug_message(4, 'selected_spectra.shape: ' + str(selected_spectra.shape))
+            self.logger.debug_message(5, 'selected_spectra: ' + str(selected_spectra))
+            maximum_spectra[i] = np.amax(selected_spectra, axis=0)
+
+        return 0, maximum_spectra
+
 
     #-------------------------------------------------------------------------------
+
+    def downscale_sanity_check(self, num_freqs, findex, findex_begin, findex_end):
+        for i in range(num_freqs):
+            if findex_begin[i] > findex[i]:
+                self.logger.log_message(audiofile + ': findex[' + str(i) + ']: begin error')
+                return 1
+            if findex_end[i] < findex[i]:
+                self.logger.log_message(audiofile + ': findex[' + str(i) + ']: end error')
+                return 1
+            if i == 0:
+                if findex_end[i] >= findex_begin[i+1]:
+                    self.logger.log_message(audiofile + ': findex[' + str(i) + ']: end overlap error')
+                    return 1
+            else:
+                if i < (num_freqs - 1):
+                    if findex_begin[i] <= findex_end[i-1]:
+                        self.logger.log_message(audiofile + ': findex[' + str(i) + ']: begin overlap error')
+                        return 1
+                    if findex_end[i] >= findex_begin[i+1]:
+                        self.logger.log_message(audiofile + ': findex[' + str(i) + ']: end overlap error')
+                        return 1
+                else:
+                    if findex_begin[i] <= findex_end[i-1]:
+                        self.logger.log_message(audiofile + ': findex[' + str(i) + ']: begin overlap error')
+                        return 1
+        return 0
+
 
     def get_mean(self, values):
         try:
             np.seterr(divide = 'raise') 
             mean_value = mstats.gmean(values) # may fail with "RuntimeWarning: divide by zero encountered in log"
         except:
-            mean_value = np.mean(values)  # use arithmetic mean if geometric mean fails 
+            mean_value = np.mean(values)  # use arithmetic mean if geometric mean fails, e.g. for [0, 1]
         finally:
             np.seterr(divide = 'warn')
         return mean_value
+       
+
+class SpectrogramPlotter:
+    
+    def __init__(self, options, fmin, fmax, logger):
+        self.args = options
+        self.fmin = fmin
+        self.fmax = fmax
+        self.logger = logger
+
+
+    def plot_spectrogram(self, t, f, Sxx, audiofile):
+        self.logger.log_message(audiofile + ': generating the image ...')
+        plt.pcolormesh(t, f, Sxx)
+        self.set_xaxis()
+        self.set_yaxis()
+        plt.grid(True)
+        plt.title(os.path.basename(audiofile))
+        
+        if self.args.batch:
+            image_file = audiofile + '.png'
+            self.logger.log_message(audiofile + ': create spectrogram ' + os.path.basename(image_file))
+            plt.savefig(image_file, dpi=self.args.ppi)
+        else:
+            plt.show()
+
+    #-------------------------------------------------------------------------------
+
+    def set_xaxis(self):
+        plt.xlabel('t [sec]')
+
+
+    def set_yaxis(self):
+        plt.ylabel('f [Hz]')
+        plt.yscale('symlog')
+        plt.ylim(self.fmin, self.fmax)
+        
+        ticks = self.get_yaxis_ticks()
+        labels = self.get_yaxis_labels(ticks)
+        plt.yticks(ticks, labels)
+
+    #-------------------------------------------------------------------------------
+
+    def get_yaxis_ticks(self):
+        yt = np.arange(10, 100, 10)                                         # creates [10, 20, 30, ... 80, 90]
+        yt = np.concatenate((yt, 10 * yt, 100 * yt, 1000 * yt, 10000 * yt)) # extend to 100, 1k, 10k, 100k
+        yt = yt[yt <= self.fmax]
+        ticks = yt.tolist()
+        return ticks
+
+
+    def get_yaxis_labels(self, ticks):
+        labels = []
+        for tick in ticks:
+            if tick >= 1000:
+                label = str(int(tick/1000)) + 'k'
+            else:
+                label = str(int(tick))
+            if label[0] != '1' and label[0] != '2' and label[0] != '5':
+                label = ''
+            labels.append(label)
+        return labels
 
 
 class SoundSpecLogger:
@@ -479,6 +560,7 @@ class SoundSpecLogger:
         finally:
             if self.print_lock:
                 self.print_lock.release()
+
 
     def debug_message(self, level, msg):
         if self.args.debug_level > level:
