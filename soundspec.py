@@ -59,10 +59,6 @@ class SoundSpec:
             self.args.num_cores = 1 # force single core processing when not in batch mode
         self.read_file_lock = None
         
-        # common sense limits for frequency
-        self.fmin = 10
-        self.fmax = 20000
-
         # FFT at high resolution makes way too many frequencies
         # set some lower number of frequencies we would like to keep
         # final result will be even smaller after pruning
@@ -160,6 +156,40 @@ class SoundSpec:
 
 
     def process_file(self, audiofile):
+        audiofile_reader = AudioFileReader(self.read_file_lock, self.logger)
+        sf, audio = audiofile_reader.read(audiofile)
+        # starting from here the code runs concurrently in batch mode
+        if sf != None: 
+            spectrogram_creator = SpectrogramCreator(self.args, self.read_file_lock, self.logger)
+            spectrogram_creator.create(audiofile, sf, audio)
+            return 0
+        else:
+            return 1
+
+
+class AudioFileReader:
+    
+    def __init__(self, read_file_lock, logger):
+        self.read_file_lock = read_file_lock
+        self.logger = logger
+        self.known_extensions = ['.wav']  # WAV files
+        
+        # settings for ffmpeg
+        self.ffmpeg = 'ffmpeg'  # set full path to ffmpeg if required 
+        self.ffmpeg_loglevel = 'error'
+        if self.ffmpeg != None:
+            # add all file types handled by ffmpeg: (incomplete)
+            self.known_extensions.append('.flac')
+            self.known_extensions.append('.mp3')
+            self.known_extensions.append('.mp4')
+            self.known_extensions.append('.m4a')
+            self.known_extensions.append('.mkv')
+            self.known_extensions.append('.avi')
+            self.known_extensions.append('.ogg')
+            self.known_extensions.append('.webm')
+
+
+    def read(self, audiofile):
         # read the file
         # - use a lock to prevent concurrent reads (if available)
         if self.read_file_lock:
@@ -168,7 +198,7 @@ class SoundSpec:
         try:
             if not os.path.exists(audiofile):
                 self.logger.log_message(audiofile + ': not found')
-                return 1
+                return None, None
             self.logger.log_message(audiofile + ': reading ...')
             if self.is_wav_file(audiofile):
                 wav_file = audiofile
@@ -176,10 +206,10 @@ class SoundSpec:
                 # convert audiofile into wav_file:
                 wav_file = self.convert_to_wav(audiofile)
                 if wav_file == None:
-                    return 1
+                    return None, None
                 if not os.path.exists(wav_file):
                     self.logger.log_message(audiofile + ': failed to convert into wav format')
-                    return 1
+                    return None, None
                     
             sf, audio = wavfile.read(wav_file) # sf = samplerate in Hz, audio.shape[] = #samples, [#channels (if > 1)]
             num_samples = audio.shape[0]
@@ -187,22 +217,66 @@ class SoundSpec:
             if len(audio.shape) > 1:
                 num_channels = audio.shape[1]
             run_time = num_samples / sf
-            self.logger.log_message(audiofile + ': ' + str(num_channels) + ' channel(s) at ' + str(sf) + ' kHz samplerate with ' + str(run_time) + ' s runtime')
+            self.logger.log_message(audiofile + ': ' + str(num_channels) + ' channel(s) at ' + str(sf/1000) + ' kHz samplerate with ' + str(run_time) + ' s runtime')
 
         except:
             self.logger.log_message(audiofile + ': error reading audio data')
-            return 1
+            return None, None
         finally:
             if wav_file != None and wav_file != audiofile:
                 os.unlink(wav_file)
             if self.read_file_lock:
                 self.read_file_lock.release()
-                
-        # starting from here the code runs concurrently in batch mode
+        return sf, audio
+
+
+    def is_wav_file(self, filename):
+        root, ext = os.path.splitext(filename)
+        if ext.lower() == '.wav':
+            return True
+        return False
+
+
+    def convert_to_wav(self, audiofile):
+        # convert audiofile into wav_file:
+        self.logger.log_message(audiofile + ': converting into wav format ...')
+        wav_file = audiofile + '_tmp-soundspec.wav'
+        if os.path.exists(wav_file):
+            os.unlink(wav_file)
         
+        try:
+            args = [self.ffmpeg, '-loglevel', self.ffmpeg_loglevel, '-nostdin', '-i', audiofile, wav_file]
+            completed_process = subprocess.run(args, capture_output=True, check=True)
+        except subprocess.SubprocessError as ex:
+            self.logger.log_message(audiofile + ': failed to convert into wav format: ' + ex.stderr.decode())
+            return None
+        except:
+            self.logger.log_message(audiofile + ': failed to convert into wav format: unknown exeption')
+            return None
+        return wav_file
+    
+
+class SpectrogramCreator:
+  
+    def __init__(self, options, read_file_lock, logger):
+        self.args = options
+        self.read_file_lock = read_file_lock
+        self.logger = logger
+        
+        # common sense limits for frequency
+        self.fmin = 10
+        self.fmax = 20000
+
+        # FFT at high resolution makes way too many frequencies
+        # set some lower number of frequencies we would like to keep
+        # final result will be even smaller after pruning
+        self.nf = self.args.resolution
+
+    
+    def create(self, audiofile, sf, audio):
         if sf < self.fmin:
-          self.logger.log_message(audiofile + ': Sampling frequency too low')
-          return 1
+            self.logger.log_message(audiofile + ': Sampling frequency too low')
+            return 1
 
         self.logger.log_message(audiofile + ': processing ...')
 
@@ -220,6 +294,8 @@ class SoundSpec:
         # (assuming an image width of about 1000 px)
         # negative values ought to be fine
         # this needs to change if image size becomes parametrized
+        num_samples = audio.shape[0]
+        run_time = num_samples / sf
         winfudge = 1 - (run_time / self.nf)
         num_overlap = int(winfudge * npts)
 
@@ -238,7 +314,7 @@ class SoundSpec:
         a = np.log10(self.fmax - self.fmin + 1) / (self.nf - 1)
         freqs = np.empty(self.nf, int)
         for i in range(self.nf):
-          freqs[i] = np.power(10, a * i) + b
+            freqs[i] = np.power(10, a * i) + b
         # list of frequencies, exponentially distributed:
         freqs = np.unique(freqs)    # remove duplicates
         self.logger.debug_message(1, 'freqs.size: ' + str(freqs.size))
@@ -267,7 +343,7 @@ class SoundSpec:
         # this is usually a massive cropping of the initial FFT data
         fnew = []
         for i in findex:
-          fnew.append(f[i])
+            fnew.append(f[i])
         f = np.asarray(fnew)
 
         if self.args.use_maximum:
@@ -383,33 +459,6 @@ class SoundSpec:
             np.seterr(divide = 'warn')
         return mean_value
 
-
-    def is_wav_file(self, filename):
-        root, ext = os.path.splitext(filename)
-        if ext.lower() == '.wav':
-            return True
-        return False
-
-
-    def convert_to_wav(self, audiofile):
-        # convert audiofile into wav_file:
-        self.logger.log_message(audiofile + ': converting into wav format ...')
-        wav_file = audiofile + '_tmp-soundspec.wav'
-        if os.path.exists(wav_file):
-            os.unlink(wav_file)
-        
-        try:
-            args = [self.ffmpeg, '-loglevel', self.ffmpeg_loglevel, '-nostdin', '-i', audiofile, wav_file]
-            completed_process = subprocess.run(args, capture_output=True, check=True)
-        except subprocess.SubprocessError as ex:
-            self.logger.log_message(audiofile + ': failed to convert into wav format: ' + ex.stderr.decode())
-            return None
-        except:
-            self.logger.log_message(audiofile + ': failed to convert into wav format: unknown exeption')
-            return None
-                    
-        return wav_file
-    
 
 class SoundSpecLogger:
   
