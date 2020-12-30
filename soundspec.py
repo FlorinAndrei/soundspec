@@ -28,7 +28,7 @@ def main():
 ####################################################################################
 
 def get_argument_parser():
-    argpar = argparse.ArgumentParser(description="soundspec v0.1.3 - generate spectrogram from sound file")
+    argpar = argparse.ArgumentParser(description="soundspec v0.1.4 - generate spectrogram from sound file")
     num_cores_avail = multiprocessing.cpu_count()
     
     # add options:
@@ -75,6 +75,7 @@ class SoundSpec:
             self.known_extensions.append('.mkv')
             self.known_extensions.append('.avi')
             self.known_extensions.append('.ogg')
+            self.known_extensions.append('.webm')
 
 
     def process(self):
@@ -174,7 +175,13 @@ class SoundSpec:
                     self.log_message(audiofile + ': failed to convert into wav format')
                     return 1
                     
-            sf, audio = wavfile.read(wav_file)
+            sf, audio = wavfile.read(wav_file) # sf = samplerate in Hz, audio.shape[] = #samples, [#channels (if > 1)]
+            num_samples = audio.shape[0]
+            num_channels = 1;
+            if len(audio.shape) > 1:
+                num_channels = audio.shape[1]
+            self.log_message(audiofile + ': ' + str(num_channels) + ' channel(s) at ' + str(sf) + ' kHz samplerate with ' + str(num_samples / sf) + ' s runtime')
+
         except:
             self.log_message(audiofile + ': error reading audio data')
             return 1

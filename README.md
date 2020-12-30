@@ -1,7 +1,7 @@
 # soundspec
 spectrum visualizer for audio files; uses the Fourier transform
 
-Requires Python 3 and a few typical number crunching modules. Install the modules and run the `soundspec.py` script as is. It should be self-explanatory. Only works on WAV files, so use VLC or ffmpeg to convert your file to WAV first.
+Requires Python 3 and a few typical number crunching modules. Install the modules and run the `soundspec.py` script as is. It should be self-explanatory. It works on these type of files: WAV, FLAC, MP3, MP4, MKV, AVI, OGG, WEBM. It uses ffmpeg to convert files other than WAV to WAV. If your file type is not supported convert it to WAV first with ffmpeg or VLC.
 
 There's an .sh file and a .bat file for batch processing - analyzing many files with one command. Those require ffmpeg, and can analyze any type of audio file - MP3, M4A, FLAC, etc, if it's supported by ffmpeg, it will probably work.
 
@@ -43,6 +43,18 @@ soundspec-batch.bat "C:\Users\darkstar\Music\Bananas album"
 
 It will take a few seconds to analyze each song. Next to the songs you'll find PNG files with the spectral analysis for each song. If you give it thousands of files, it may take hours to complete; it will not overload your system since only one song is processed at any given time.
 
+You may also use the batchmode with option -b:
+
+```
+soundspec.py -b "C:\Users\darkstar\Music\Bananas album\*.wav"
+```
+
+In this case the app uses all available cores to speed up processing which leads to 100% CPU load. If this is not desired you may specifiy how many cores the app may use with option -c <num_cores>:
+
+```
+soundspec.py -b -c2 "C:\Users\darkstar\Music\Bananas album\*.wav"
+```
+ 
 There's no GUI at all in batch mode. Almost any audio file format is supported in this mode, including MP3, M4A, FLAC, etc. Feel free to mix and match different file types.
 
 ## For Ubuntu users

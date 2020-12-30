@@ -6,3 +6,6 @@ __pycache__
 *.wav
 *.png
 !joker.png
+.project
+.pydevproject
+
