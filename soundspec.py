@@ -54,10 +54,10 @@ class SoundSpec:
   
     def __init__(self, options):
         self.args = options
+        self.logger = SoundSpecLogger(options)
         if not self.args.batch:
             self.args.num_cores = 1 # force single core processing when not in batch mode
         self.read_file_lock = None
-        self.print_lock = None
         
         # common sense limits for frequency
         self.fmin = 10
@@ -92,10 +92,10 @@ class SoundSpec:
         else:
             num_errors = self.process_files_single_process(audio_files)
         if num_errors > 0:
-            self.log_message('failed for ' + str(num_errors) + ' of ' + str(num_files) + ' files.')
+            self.logger.log_message('failed for ' + str(num_errors) + ' of ' + str(num_files) + ' files.')
         else:
             if num_files > 1:
-                self.log_message('succeeded for ' + str(num_files) + ' files')
+                self.logger.log_message('succeeded for ' + str(num_files) + ' files')
                 
     #-------------------------------------------------------------------------------
 
@@ -108,7 +108,7 @@ class SoundSpec:
                 if self.is_audio_file(file):
                     list_of_files.append(file)
                 else:
-                    self.log_message('ignored file ' + file + ': file type not supported or no audio file')
+                    self.logger.log_message('ignored file ' + file + ': file type not supported or no audio file')
         return list_of_files
     
     
@@ -156,7 +156,7 @@ class SoundSpec:
     
     def initialize_locks(self, read_file_lock, print_lock):
         self.read_file_lock = read_file_lock
-        self.print_lock = print_lock # multiprocessing.Lock()
+        self.logger.initialize_lock(print_lock)
 
 
     def process_file(self, audiofile):
@@ -167,9 +167,9 @@ class SoundSpec:
         wav_file = None
         try:
             if not os.path.exists(audiofile):
-                self.log_message(audiofile + ': not found')
+                self.logger.log_message(audiofile + ': not found')
                 return 1
-            self.log_message(audiofile + ': reading ...')
+            self.logger.log_message(audiofile + ': reading ...')
             if self.is_wav_file(audiofile):
                 wav_file = audiofile
             else:    
@@ -178,7 +178,7 @@ class SoundSpec:
                 if wav_file == None:
                     return 1
                 if not os.path.exists(wav_file):
-                    self.log_message(audiofile + ': failed to convert into wav format')
+                    self.logger.log_message(audiofile + ': failed to convert into wav format')
                     return 1
                     
             sf, audio = wavfile.read(wav_file) # sf = samplerate in Hz, audio.shape[] = #samples, [#channels (if > 1)]
@@ -187,10 +187,10 @@ class SoundSpec:
             if len(audio.shape) > 1:
                 num_channels = audio.shape[1]
             run_time = num_samples / sf
-            self.log_message(audiofile + ': ' + str(num_channels) + ' channel(s) at ' + str(sf) + ' kHz samplerate with ' + str(run_time) + ' s runtime')
+            self.logger.log_message(audiofile + ': ' + str(num_channels) + ' channel(s) at ' + str(sf) + ' kHz samplerate with ' + str(run_time) + ' s runtime')
 
         except:
-            self.log_message(audiofile + ': error reading audio data')
+            self.logger.log_message(audiofile + ': error reading audio data')
             return 1
         finally:
             if wav_file != None and wav_file != audiofile:
@@ -201,15 +201,15 @@ class SoundSpec:
         # starting from here the code runs concurrently in batch mode
         
         if sf < self.fmin:
-          self.log_message(audiofile + ': Sampling frequency too low')
+          self.logger.log_message(audiofile + ': Sampling frequency too low')
           return 1
 
-        self.log_message(audiofile + ': processing ...')
+        self.logger.log_message(audiofile + ': processing ...')
 
         # convert to mono
         sig = np.mean(audio,axis = 1) if (audio.ndim>=2) else audio 
 
-        self.log_message(audiofile + ': calculating FFT ...')
+        self.logger.log_message(audiofile + ': calculating FFT ...')
         # vertical resolution (frequency)
         # number of points per segment; more points = better frequency resolution
         # if equal to sf, then frequency resolution is 1 Hz
@@ -228,9 +228,9 @@ class SoundSpec:
         # - t = [0.5 .. run_time-0.5],
         # - Sxx = array[f.size, t.size]
         f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=num_overlap, mode='magnitude')
-        self.debug_message(6, 'f.shape: ' + str(f.shape))
-        self.debug_message(6, 't.shape: ' + str(t.shape))
-        self.debug_message(6, 'Sxx.shape: ' + str(Sxx.shape))
+        self.logger.debug_message(6, 'f.shape: ' + str(f.shape))
+        self.logger.debug_message(6, 't.shape: ' + str(t.shape))
+        self.logger.debug_message(6, 'Sxx.shape: ' + str(Sxx.shape))
 
         # generate an exponential distribution of frequencies
         # (as opposed to the linear distribution from FFT)
@@ -241,7 +241,7 @@ class SoundSpec:
           freqs[i] = np.power(10, a * i) + b
         # list of frequencies, exponentially distributed:
         freqs = np.unique(freqs)    # remove duplicates
-        self.debug_message(1, 'freqs.size: ' + str(freqs.size))
+        self.logger.debug_message(1, 'freqs.size: ' + str(freqs.size))
 
         # delete frequencies lower than fmin
         fnew = f[f >= self.fmin]
@@ -254,14 +254,14 @@ class SoundSpec:
         cropsize = f.size - fnew.size
         f = fnew
         Sxx = Sxx[:-cropsize, :]
-        self.debug_message(1, 'Sxx.shape: ' + str(Sxx.shape))
+        self.logger.debug_message(1, 'Sxx.shape: ' + str(Sxx.shape))
 
         # find FFT frequencies closest to calculated exponential frequency distribution
         findex = []
         for i in range(freqs.size):
             f_ind = (np.abs(f - freqs[i])).argmin()
             findex.append(f_ind)
-        self.debug_message(2, 'findex: len=' + str(len(findex)) + ': ' + str(findex))
+        self.logger.debug_message(2, 'findex: len=' + str(len(findex)) + ': ' + str(findex))
 
         # keep only frequencies closest to exponential distribution
         # this is usually a massive cropping of the initial FFT data
@@ -297,44 +297,44 @@ class SoundSpec:
 
                         end = findex[i]                             # at last point
                         findex_end.append(end)
-            self.debug_message(6, findex_begin)
-            self.debug_message(6, findex_end)
+            self.logger.debug_message(6, findex_begin)
+            self.logger.debug_message(6, findex_end)
 
             # sanity check
             for i in range(freqs.size):
                 if findex_begin[i] > findex[i]:
-                    self.log_message(audiofile + ': findex[' + str(i) + ']: begin error')
+                    self.logger.log_message(audiofile + ': findex[' + str(i) + ']: begin error')
                     return 1
                 if findex_end[i] < findex[i]:
-                    self.log_message(audiofile + ': findex[' + str(i) + ']: end error')
+                    self.logger.log_message(audiofile + ': findex[' + str(i) + ']: end error')
                     return 1
                 if i == 0:
                     if findex_end[i] >= findex_begin[i+1]:
-                        self.log_message(audiofile + ': findex[' + str(i) + ']: end overlap error')
+                        self.logger.log_message(audiofile + ': findex[' + str(i) + ']: end overlap error')
                         return 1
                 else:
                     if i < (freqs.size - 1):
                         if findex_begin[i] <= findex_end[i-1]:
-                            self.log_message(audiofile + ': findex[' + str(i) + ']: begin overlap error')
+                            self.logger.log_message(audiofile + ': findex[' + str(i) + ']: begin overlap error')
                             return 1
                         if findex_end[i] >= findex_begin[i+1]:
-                            self.log_message(audiofile + ': findex[' + str(i) + ']: end overlap error')
+                            self.logger.log_message(audiofile + ': findex[' + str(i) + ']: end overlap error')
                             return 1
                     else:
                         if findex_begin[i] <= findex_end[i-1]:
-                            self.log_message(audiofile + ': findex[' + str(i) + ']: begin overlap error')
+                            self.logger.log_message(audiofile + ': findex[' + str(i) + ']: begin overlap error')
                             return 1
 
-            self.debug_message(2, 'Sxx.shape: ' + str(Sxx.shape))
+            self.logger.debug_message(2, 'Sxx.shape: ' + str(Sxx.shape))
             maximum_spectra = np.empty((freqs.size, Sxx.shape[1]))  # 85 frequencies in 91 spectra
-            self.debug_message(2, 'maximum_spectra.shape :' + str(maximum_spectra.shape))
+            self.logger.debug_message(2, 'maximum_spectra.shape :' + str(maximum_spectra.shape))
             for i in range(freqs.size):
                 # select those spectra which shall be used to find the maximum for each frequency
                 ssx_range = range(findex_begin[i], findex_end[i] + 1)
-                self.debug_message(4, 'ssx_range             : ' + str(ssx_range))
+                self.logger.debug_message(4, 'ssx_range             : ' + str(ssx_range))
                 selected_spectra = Sxx[ssx_range, :]
-                self.debug_message(4, 'selected_spectra.shape: ' + str(selected_spectra.shape))
-                self.debug_message(5, 'selected_spectra: ' + str(selected_spectra))
+                self.logger.debug_message(4, 'selected_spectra.shape: ' + str(selected_spectra.shape))
+                self.logger.debug_message(5, 'selected_spectra: ' + str(selected_spectra))
                 maximum_spectra[i] = np.amax(selected_spectra, axis=0)
 
             Sxx = maximum_spectra
@@ -342,12 +342,12 @@ class SoundSpec:
             Sxxnew = Sxx[findex, :]
             Sxx = Sxxnew
 
-        self.debug_message(1, Sxx.shape)
+        self.logger.debug_message(1, Sxx.shape)
         if not self.args.use_linear_amplitude:
             Sxx = np.log10(Sxx)
-        self.debug_message(3, 'Sxx:\n' + str(Sxx))
+        self.logger.debug_message(3, 'Sxx:\n' + str(Sxx))
 
-        self.log_message(audiofile + ': generating the image ...')
+        self.logger.log_message(audiofile + ': generating the image ...')
         plt.pcolormesh(t, f, Sxx)
         plt.ylabel('f [Hz]')
         plt.xlabel('t [sec]')
@@ -365,7 +365,7 @@ class SoundSpec:
         plt.grid(True)
         if self.args.batch:
             image_file = audiofile + '.png'
-            self.log_message(audiofile + ': create spectrogram ' + os.path.basename(image_file))
+            self.logger.log_message(audiofile + ': create spectrogram ' + os.path.basename(image_file))
             plt.savefig(image_file, dpi=200)
         else:
             plt.show()
@@ -393,7 +393,7 @@ class SoundSpec:
 
     def convert_to_wav(self, audiofile):
         # convert audiofile into wav_file:
-        self.log_message(audiofile + ': converting into wav format ...')
+        self.logger.log_message(audiofile + ': converting into wav format ...')
         wav_file = audiofile + '_tmp-soundspec.wav'
         if os.path.exists(wav_file):
             os.unlink(wav_file)
@@ -402,14 +402,25 @@ class SoundSpec:
             args = [self.ffmpeg, '-loglevel', self.ffmpeg_loglevel, '-nostdin', '-i', audiofile, wav_file]
             completed_process = subprocess.run(args, capture_output=True, check=True)
         except subprocess.SubprocessError as ex:
-            self.log_message(audiofile + ': failed to convert into wav format: ' + ex.stderr.decode())
+            self.logger.log_message(audiofile + ': failed to convert into wav format: ' + ex.stderr.decode())
             return None
         except:
-            self.log_message(audiofile + ': failed to convert into wav format: unknown exeption')
+            self.logger.log_message(audiofile + ': failed to convert into wav format: unknown exeption')
             return None
                     
         return wav_file
     
+
+class SoundSpecLogger:
+  
+    def __init__(self, options):
+        self.args = options
+        self.print_lock = None
+        
+        
+    def initialize_lock(self, print_lock):
+        self.print_lock = print_lock
+
 
     def log_message(self, msg):
         if self.print_lock:
