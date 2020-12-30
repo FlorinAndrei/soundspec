@@ -2,6 +2,7 @@
 
 from scipy.io import wavfile
 from scipy import signal
+from scipy.stats import mstats
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse
@@ -28,7 +29,7 @@ def main():
 ####################################################################################
 
 def get_argument_parser():
-    argpar = argparse.ArgumentParser(description="soundspec v0.1.4 - generate spectrogram from sound file")
+    argpar = argparse.ArgumentParser(description="soundspec v0.1.5 - generate spectrogram from sound file")
     num_cores_avail = multiprocessing.cpu_count()
     
     # add options:
@@ -36,6 +37,10 @@ def get_argument_parser():
     argpar.add_argument('-c', type=int, dest='num_cores', default = num_cores_avail,
                         help='number of cores to use, default is ' + str(num_cores_avail) + 
                         ' (set to smaller value if not enough memory, or to 1 to force single core processing)')
+    argpar.add_argument('-d', '--debug', type=int, dest='debug_level', help='set debug level', default=0)
+    argpar.add_argument('-l', '--linear', dest='use_linear_amplitude', help='use linear amplitude', action='store_true')
+    argpar.add_argument('-m', '--maximum', dest='use_maximum', help='use maximum instead of skipping frequencies', action='store_true')
+    argpar.add_argument('-r', '--resolution', type=int, help='set resolution (default is 1000)', default=1000)
 
     # add arguments:
     argpar.add_argument('audiofile', type=str, nargs='+', 
@@ -61,7 +66,7 @@ class SoundSpec:
         # FFT at high resolution makes way too many frequencies
         # set some lower number of frequencies we would like to keep
         # final result will be even smaller after pruning
-        self.nf = 1000
+        self.nf = self.args.resolution
         self.known_extensions = ['.wav']  # WAV files
 
         # settings for ffmpeg
@@ -72,6 +77,7 @@ class SoundSpec:
             self.known_extensions.append('.flac')
             self.known_extensions.append('.mp3')
             self.known_extensions.append('.mp4')
+            self.known_extensions.append('.m4a')
             self.known_extensions.append('.mkv')
             self.known_extensions.append('.avi')
             self.known_extensions.append('.ogg')
@@ -180,7 +186,8 @@ class SoundSpec:
             num_channels = 1;
             if len(audio.shape) > 1:
                 num_channels = audio.shape[1]
-            self.log_message(audiofile + ': ' + str(num_channels) + ' channel(s) at ' + str(sf) + ' kHz samplerate with ' + str(num_samples / sf) + ' s runtime')
+            run_time = num_samples / sf
+            self.log_message(audiofile + ': ' + str(num_channels) + ' channel(s) at ' + str(sf) + ' kHz samplerate with ' + str(run_time) + ' s runtime')
 
         except:
             self.log_message(audiofile + ': error reading audio data')
@@ -202,6 +209,7 @@ class SoundSpec:
         # convert to mono
         sig = np.mean(audio,axis = 1) if (audio.ndim>=2) else audio 
 
+        self.log_message(audiofile + ': calculating FFT ...')
         # vertical resolution (frequency)
         # number of points per segment; more points = better frequency resolution
         # if equal to sf, then frequency resolution is 1 Hz
@@ -212,10 +220,17 @@ class SoundSpec:
         # (assuming an image width of about 1000 px)
         # negative values ought to be fine
         # this needs to change if image size becomes parametrized
-        winfudge = 1 - ((np.shape(sig)[0] / sf) / 1000) # TODO: should we replace 1000 by self.nf?
+        winfudge = 1 - (run_time / self.nf)
+        num_overlap = int(winfudge * npts)
 
-        self.log_message(audiofile + ': calculating FFT ...')
-        f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=int(winfudge * npts))
+        # create the spectrogram, returns:
+        # - f = [0..sf/2], 
+        # - t = [0.5 .. run_time-0.5],
+        # - Sxx = array[f.size, t.size]
+        f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=num_overlap, mode='magnitude')
+        self.debug_message(6, 'f.shape: ' + str(f.shape))
+        self.debug_message(6, 't.shape: ' + str(t.shape))
+        self.debug_message(6, 'Sxx.shape: ' + str(Sxx.shape))
 
         # generate an exponential distribution of frequencies
         # (as opposed to the linear distribution from FFT)
@@ -225,7 +240,8 @@ class SoundSpec:
         for i in range(self.nf):
           freqs[i] = np.power(10, a * i) + b
         # list of frequencies, exponentially distributed:
-        freqs = np.unique(freqs)
+        freqs = np.unique(freqs)    # remove duplicates
+        self.debug_message(1, 'freqs.size: ' + str(freqs.size))
 
         # delete frequencies lower than fmin
         fnew = f[f >= self.fmin]
@@ -238,12 +254,14 @@ class SoundSpec:
         cropsize = f.size - fnew.size
         f = fnew
         Sxx = Sxx[:-cropsize, :]
+        self.debug_message(1, 'Sxx.shape: ' + str(Sxx.shape))
 
-        findex = []
         # find FFT frequencies closest to calculated exponential frequency distribution
+        findex = []
         for i in range(freqs.size):
-          f_ind = (np.abs(f - freqs[i])).argmin()
-          findex.append(f_ind)
+            f_ind = (np.abs(f - freqs[i])).argmin()
+            findex.append(f_ind)
+        self.debug_message(2, 'findex: len=' + str(len(findex)) + ': ' + str(findex))
 
         # keep only frequencies closest to exponential distribution
         # this is usually a massive cropping of the initial FFT data
@@ -251,11 +269,86 @@ class SoundSpec:
         for i in findex:
           fnew.append(f[i])
         f = np.asarray(fnew)
-        Sxxnew = Sxx[findex, :]
-        Sxx = Sxxnew
+
+        if self.args.use_maximum:
+            findex_begin = []
+            findex_end = []
+            for i in range(freqs.size):
+                if i == 0:
+                    begin = 0                                       # at 1st point
+                    findex_begin.append(begin)
+
+                    end = self.get_mean(findex[0 : 2])              # geometric mean of 1st two points
+                    end = min(int(end + 0.5), findex[1] - 1)        # limit to valid range (no overlap with next range)
+                    end = max(end, 0)
+                    findex_end.append(end)
+                else:
+                    if i < (freqs.size - 1):
+                        begin = findex_end[i-1] + 1                 # at 1st point after previous range
+                        findex_begin.append(begin)
+
+                        end = self.get_mean(findex[i : i+2])        # geometric mean of current and next point
+                        end = min(int(end+0.5), findex[i+1] - 1)    # limit to valid range (no overlap with next range
+                        end = max(end, findex[i])
+                        findex_end.append(end)
+                    else:
+                        begin = findex_end[i-1] + 1                 # at 1st point after previous range
+                        findex_begin.append(begin)
+
+                        end = findex[i]                             # at last point
+                        findex_end.append(end)
+            self.debug_message(6, findex_begin)
+            self.debug_message(6, findex_end)
+
+            # sanity check
+            for i in range(freqs.size):
+                if findex_begin[i] > findex[i]:
+                    self.log_message(audiofile + ': findex[' + str(i) + ']: begin error')
+                    return 1
+                if findex_end[i] < findex[i]:
+                    self.log_message(audiofile + ': findex[' + str(i) + ']: end error')
+                    return 1
+                if i == 0:
+                    if findex_end[i] >= findex_begin[i+1]:
+                        self.log_message(audiofile + ': findex[' + str(i) + ']: end overlap error')
+                        return 1
+                else:
+                    if i < (freqs.size - 1):
+                        if findex_begin[i] <= findex_end[i-1]:
+                            self.log_message(audiofile + ': findex[' + str(i) + ']: begin overlap error')
+                            return 1
+                        if findex_end[i] >= findex_begin[i+1]:
+                            self.log_message(audiofile + ': findex[' + str(i) + ']: end overlap error')
+                            return 1
+                    else:
+                        if findex_begin[i] <= findex_end[i-1]:
+                            self.log_message(audiofile + ': findex[' + str(i) + ']: begin overlap error')
+                            return 1
+
+            self.debug_message(2, 'Sxx.shape: ' + str(Sxx.shape))
+            maximum_spectra = np.empty((freqs.size, Sxx.shape[1]))  # 85 frequencies in 91 spectra
+            self.debug_message(2, 'maximum_spectra.shape :' + str(maximum_spectra.shape))
+            for i in range(freqs.size):
+                # select those spectra which shall be used to find the maximum for each frequency
+                ssx_range = range(findex_begin[i], findex_end[i] + 1)
+                self.debug_message(4, 'ssx_range             : ' + str(ssx_range))
+                selected_spectra = Sxx[ssx_range, :]
+                self.debug_message(4, 'selected_spectra.shape: ' + str(selected_spectra.shape))
+                self.debug_message(5, 'selected_spectra: ' + str(selected_spectra))
+                maximum_spectra[i] = np.amax(selected_spectra, axis=0)
+
+            Sxx = maximum_spectra
+        else:
+            Sxxnew = Sxx[findex, :]
+            Sxx = Sxxnew
+
+        self.debug_message(1, Sxx.shape)
+        if not self.args.use_linear_amplitude:
+            Sxx = np.log10(Sxx)
+        self.debug_message(3, 'Sxx:\n' + str(Sxx))
 
         self.log_message(audiofile + ': generating the image ...')
-        plt.pcolormesh(t, f, np.log10(Sxx))
+        plt.pcolormesh(t, f, Sxx)
         plt.ylabel('f [Hz]')
         plt.xlabel('t [sec]')
         plt.yscale('symlog')
@@ -264,7 +357,7 @@ class SoundSpec:
         # TODO: make this depend on fmin / fmax
         # right now I'm assuming a range close to 10 - 20000
         yt = np.arange(10, 100, 10)
-        yt = np.concatenate((yt, 10 * yt, 100 * yt, 1000 * yt))
+        yt = np.concatenate((yt, 10 * yt, 100 * yt, self.nf * yt))
         yt = yt[yt <= self.fmax]
         yt = yt.tolist()
         plt.yticks(yt)
@@ -279,6 +372,17 @@ class SoundSpec:
         return 0
 
     #-------------------------------------------------------------------------------
+
+    def get_mean(self, values):
+        try:
+            np.seterr(divide = 'raise') 
+            mean_value = mstats.gmean(values) # may fail with "RuntimeWarning: divide by zero encountered in log"
+        except:
+            mean_value = np.mean(values)  # use arithmetic mean if geometric mean fails 
+        finally:
+            np.seterr(divide = 'warn')
+        return mean_value
+
 
     def is_wav_file(self, filename):
         root, ext = os.path.splitext(filename)
@@ -316,6 +420,9 @@ class SoundSpec:
             if self.print_lock:
                 self.print_lock.release()
 
+    def debug_message(self, level, msg):
+        if self.args.debug_level > level:
+            self.log_message(msg)
           
 ####################################################################################
 
