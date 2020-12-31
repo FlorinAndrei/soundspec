@@ -54,7 +54,13 @@ In this case the app uses all available cores to speed up processing which leads
 ```
 soundspec.py -b -c2 "C:\Users\darkstar\Music\Bananas album\*.wav"
 ```
- 
+
+In batchmode the option -p <ppi> allows to set the ppi of the graphic saved on disk. The default is 200 which leads to a file size of approximately 1 MB. Reduce the number to reduce the file size:
+
+```
+soundspec.py -b -p150 "C:\Users\darkstar\Music\Bananas album\*.wav"
+```
+
 There's no GUI at all in batch mode. Almost any audio file format is supported in this mode, including MP3, M4A, FLAC, etc. Feel free to mix and match different file types.
 
 ## For Ubuntu users
