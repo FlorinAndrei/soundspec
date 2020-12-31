@@ -17,7 +17,23 @@ import time
 #import numpy.random.bounded_integers
 #import numpy.random.entropy
 
+####################################################################################
 
+class SoundSpecLocks:
+
+    def __init__(self):
+        self.print_lock = None
+        self.read_file_lock = None
+        self.plot_file_lock = None
+        
+            
+    def enable(self):
+        self.print_lock = multiprocessing.Lock()
+        self.read_file_lock = multiprocessing.Lock()
+        self.plot_file_lock = multiprocessing.Lock()    # probably not needed 
+
+
+locks = SoundSpecLocks()
 
 ####################################################################################
 
@@ -60,8 +76,6 @@ class SoundSpec:
         self.logger = SoundSpecLogger(options)
         if not self.args.batch:
             self.args.num_cores = 1 # force single core processing when not in batch mode
-        self.read_file_lock = None
-        self.plot_file_lock = None
         
         # FFT at high resolution makes way too many frequencies
         # set some lower number of frequencies we would like to keep
@@ -115,12 +129,9 @@ class SoundSpec:
     def process_files_multi_process(self, audiofiles):
         process_list = []
         num_errors = 0
-            
-        my_read_file_lock = multiprocessing.Lock()
-        my_plot_file_lock = multiprocessing.Lock()
-        my_print_lock = multiprocessing.Lock()
+        locks.enable()
         
-        with multiprocessing.Pool(self.args.num_cores, initializer=self.initialize_locks, initargs=(my_read_file_lock,my_plot_file_lock,my_print_lock,)) as pool:
+        with multiprocessing.Pool(self.args.num_cores, ) as pool:
             for audiofile in audiofiles:
                 process = pool.apply_async(self.process_file, (audiofile,))
                 process_list.append(process)
@@ -155,20 +166,12 @@ class SoundSpec:
         return False
     
     
-    def initialize_locks(self, read_file_lock, plot_file_lock, print_lock):
-        self.read_file_lock = read_file_lock
-        self.plot_file_lock = plot_file_lock
-        self.logger.initialize_lock(print_lock)
-        print('initialize: ' + str(self.read_file_lock) + ', ' + str(self.plot_file_lock) + ', ' + str(print_lock))
-
-
     def process_file(self, audiofile):
-        print('process_file: ' + str(self.read_file_lock) + ', ' + str(self.plot_file_lock))
-        audiofile_reader = AudioFileReader(self.read_file_lock, self.logger)
+        audiofile_reader = AudioFileReader(self.logger)
         sf, audio = audiofile_reader.read(audiofile)
         # starting from here the code runs concurrently in batch mode
         if sf != None: 
-            spectrogram_creator = SpectrogramCreator(self.args, self.read_file_lock, self.plot_file_lock, self.logger)
+            spectrogram_creator = SpectrogramCreator(self.args, self.logger)
             spectrogram_creator.create(audiofile, sf, audio)
             return 0
         else:
@@ -177,8 +180,7 @@ class SoundSpec:
 
 class AudioFileReader:
     
-    def __init__(self, read_file_lock, logger):
-        self.lock = read_file_lock
+    def __init__(self, logger):
         self.logger = logger
         self.known_extensions = ['.wav']  # WAV files
         
@@ -200,11 +202,10 @@ class AudioFileReader:
     def read(self, audiofile):
         # read the file
         # - use a lock to prevent concurrent reads (if available)
-        print('read: ' + str(self.lock))
-        if self.lock:
-            self.lock.acquire()
-            print('AudioFileReader: locked for ' + audiofile)
+        if locks.read_file_lock:
+            locks.read_file_lock.acquire()
         wav_file = None
+        
         try:
             if not os.path.exists(audiofile):
                 self.logger.log_message(audiofile + ': not found')
@@ -236,9 +237,8 @@ class AudioFileReader:
         finally:
             if wav_file != None and wav_file != audiofile:
                 os.unlink(wav_file)
-            if self.lock:
-                self.lock.release()
-                print('AudioFileReader: release from ' + audiofile)
+            if locks.read_file_lock:
+                locks.read_file_lock.release()
         return sf, audio
 
     #-------------------------------------------------------------------------------
@@ -271,16 +271,10 @@ class AudioFileReader:
 
 class SpectrogramCreator:
   
-    def __init__(self, options, read_file_lock, plot_file_lock, logger):
+    def __init__(self, options, logger):
         self.args = options
-        self.read_file_lock = read_file_lock
-        self.plot_file_lock = plot_file_lock
         self.logger = logger
         
-        # common sense limits for frequency
-        self.fmin = 10
-        self.fmax = 20000
-
         # FFT at high resolution makes way too many frequencies
         # set some lower number of frequencies we would like to keep
         # final result will be even smaller after pruning
@@ -288,12 +282,14 @@ class SpectrogramCreator:
 
     
     def create(self, audiofile, sf, audio):
-        if sf < self.fmin:
+        # common sense limits for frequency
+        fmin = 10
+        if sf < fmin:
             self.logger.log_message(audiofile + ': Sampling frequency too low')
             return 1
 
         self.logger.log_message(audiofile + ': processing ...')
-        self.determine_max_freq_to_show(sf)
+        fmax = self.determine_max_freq_to_show(sf)
 
         # convert to mono
         sig = np.mean(audio,axis = 1) if (audio.ndim>=2) else audio 
@@ -325,16 +321,16 @@ class SpectrogramCreator:
         self.logger.log_message(audiofile + ': downscaling spectra ...')
         # generate an exponential distribution of frequencies
         # (as opposed to the linear distribution from FFT)
-        freqs = self.exponential_distribution_of_frequencies()
+        freqs = self.exponential_distribution_of_frequencies(fmin, fmax)
 
         # delete frequencies lower than fmin
-        fnew = f[f >= self.fmin]
+        fnew = f[f >= fmin]
         cropsize = f.size - fnew.size
         f = fnew
         Sxx = np.delete(Sxx, np.s_[0:cropsize], axis=0)
 
         # delete frequencies higher than fmax
-        fnew = f[f <= self.fmax]
+        fnew = f[f <= fmax]
         cropsize = f.size - fnew.size
         f = fnew
         Sxx = Sxx[:-cropsize, :]
@@ -369,30 +365,32 @@ class SpectrogramCreator:
         self.logger.debug_message(3, 'Sxx:\n' + str(Sxx))
 
         self.logger.log_message(audiofile + ': generating the image ...')
-        plotter = SpectrogramPlotter(self.args, self.fmin, self.fmax, self.plot_file_lock, self.logger)
+        plotter = SpectrogramPlotter(self.args, fmin, fmax, self.logger)
         plotter.plot_spectrogram(t, f, Sxx, audiofile)
         return 0
     
     #-------------------------------------------------------------------------------
 
     def determine_max_freq_to_show(self, sf):
+        fmax = 20000
         if sf >= 48000:
-            self.fmax = 22000
+            fmax = 22000
         if sf >= 88000:
-            self.fmax = 40000
+            fmax = 40000
         if sf >= 176000:
-            self.fmax = 80000
+            fmax = 80000
         if sf >= 352000:
-            self.fmax = 160000
+            fmax = 160000
         if sf >= 704000:
-            self.fmax = 320000
+            fmax = 320000
+        return fmax
 
 
-    def exponential_distribution_of_frequencies(self):
+    def exponential_distribution_of_frequencies(self, fmin, fmax):
         # generate an exponential distribution of frequencies
         # (as opposed to the linear distribution from FFT)
-        b = self.fmin - 1
-        a = np.log10(self.fmax - self.fmin + 1) / (self.nf - 1)
+        b = fmin - 1
+        a = np.log10(fmax - fmin + 1) / (self.nf - 1)
         freqs = np.empty(self.nf, int)
         for i in range(self.nf):
             freqs[i] = np.power(10, a * i) + b
@@ -495,19 +493,18 @@ class SpectrogramCreator:
 
 class SpectrogramPlotter:
     
-    def __init__(self, options, fmin, fmax, plot_lock, logger):
+    def __init__(self, options, fmin, fmax, logger):
         self.args = options
         self.fmin = fmin
         self.fmax = fmax
-        self.lock = plot_lock
         self.logger = logger
 
 
     def plot_spectrogram(self, t, f, Sxx, audiofile):
-        if self.lock:
-            self.lock.acquire()
-            print('plot_spectrogram: locked for ' + audiofile)
+        if locks.plot_file_lock:
+            locks.plot_file_lock.acquire()
         try:
+            plt.figure() # NOTE: this is required otherwise batchmode saves wrong files (data appended from previous plots)
             plt.pcolormesh(t, f, Sxx)
             self.set_xaxis(t)
             self.set_yaxis()
@@ -520,21 +517,15 @@ class SpectrogramPlotter:
                 plt.savefig(image_file, dpi=self.args.ppi)
             else:
                 plt.show()
-        except:
-            pass
         finally:
-            if self.lock:
-                print('plot_spectrogram: release from ' + audiofile)
-                self.lock.release()
+            if locks.plot_file_lock:
+                locks.plot_file_lock.release()
 
     #-------------------------------------------------------------------------------
 
     def set_xaxis(self, t):
         time_s = t[t.size-1]
-        if time_s <= 60:
-            plt.xlabel('t [sec]')
-        else:
-            plt.xlabel('t [min:sec]')
+        plt.xlabel(self.get_xlabel(time_s))
 
         ticks = self.get_xaxis_ticks(time_s)
         if ticks != None:
@@ -543,7 +534,7 @@ class SpectrogramPlotter:
             
 
     def set_yaxis(self):
-        plt.ylabel('f [Hz]')
+        plt.ylabel('frequency [Hz]')
         plt.yscale('symlog')
         plt.ylim(self.fmin, self.fmax)
         
@@ -553,11 +544,23 @@ class SpectrogramPlotter:
 
     #-------------------------------------------------------------------------------
 
+    def get_xlabel(self, time_s):
+        if time_s <= 60:
+            return 'time [sec]'
+        if time_s <= (5 * 60):
+            return 'time [min:sec]'
+        return 'time [min]'
+
+
     def get_xaxis_ticks(self, time_s):
         if time_s <= 60:
             return None # use standard x-axis
         num_minutes = time_s / 60
-        step = 30               # 0:30 ...
+        step = 10               # 0:10 ...
+        if num_minutes > 1.7:
+            step = 20           # 0:20 ...
+        if num_minutes > 3:
+            step = 30           # 0:30 ...
         if num_minutes > 5:
             step = 60           # 1:00 ...
         if num_minutes > 10:
@@ -620,19 +623,21 @@ class SoundSpecLogger:
 
 
     def log_message(self, msg):
-        if self.print_lock:
-            self.print_lock.acquire()
+        if locks.print_lock:
+            locks.print_lock.acquire()
         try:
             print(msg)
         finally:
-            if self.print_lock:
-                self.print_lock.release()
+            if locks.print_lock:
+                locks.print_lock.release()
 
 
     def debug_message(self, level, msg):
         if self.args.debug_level > level:
             self.log_message(msg)
           
+
+
 ####################################################################################
 
 if __name__ == "__main__":
