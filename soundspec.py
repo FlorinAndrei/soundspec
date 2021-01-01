@@ -46,7 +46,7 @@ def main():
 ####################################################################################
 
 def get_argument_parser():
-    argpar = argparse.ArgumentParser(description="soundspec v0.1.6 - generate spectrogram from sound file")
+    argpar = argparse.ArgumentParser(description="soundspec v0.1.7 - generate spectrogram from sound file")
     num_cores_avail = multiprocessing.cpu_count()
     
     # add options:
@@ -504,12 +504,24 @@ class SpectrogramPlotter:
         if locks.plot_file_lock:
             locks.plot_file_lock.acquire()
         try:
-            plt.figure() # NOTE: this is required otherwise batchmode saves wrong files (data appended from previous plots)
-            plt.pcolormesh(t, f, Sxx)
+            # start with a square Figure
+            fig = plt.figure(figsize=(8, 6))
+            # Add a gridspec with 1 row and 2 columns and a ratio of 2 to 7 between
+            # the size of the marginal axes and the main axes in both directions.
+            # Also adjust the subplot parameters for a square plot.
+            gs = fig.add_gridspec(1, 2,  width_ratios=[2, 6])
+#                      left=0.1, right=0.9, bottom=0.1, top=0.9,
+#                      wspace=0.05, hspace=0.05)
+            self.ax_proj = fig.add_subplot(gs[0])
+            self.ax_proj.set_title('Projection')
+            
+            self.ax_spgr = fig.add_subplot(gs[1])
+            self.ax_spgr.pcolormesh(t, f, Sxx)
             self.set_xaxis(t)
             self.set_yaxis()
-            plt.grid(True)
-            plt.title(os.path.basename(audiofile))
+            self.ax_spgr.grid(True)
+            self.ax_spgr.set_title('Spectrogram')
+            plt.suptitle(os.path.basename(audiofile))
         
             if self.args.batch:
                 image_file = audiofile + '.png'
@@ -525,31 +537,34 @@ class SpectrogramPlotter:
 
     def set_xaxis(self, t):
         time_s = t[t.size-1]
-        plt.xlabel(self.get_xlabel(time_s))
+        self.ax_spgr.set_xlabel(self.get_xlabel(time_s))
 
         ticks = self.get_xaxis_ticks(time_s)
+        print(ticks)
         if ticks != None:
             labels = self.get_xaxis_labels(time_s, ticks)
-            plt.xticks(ticks, labels)
+            self.ax_spgr.set_xticks(ticks)
+            self.ax_spgr.set_xticklabels(labels)
             
 
     def set_yaxis(self):
-        plt.ylabel('frequency [Hz]')
-        plt.yscale('symlog')
-        plt.ylim(self.fmin, self.fmax)
+        self.ax_spgr.set_ylabel('Frequency [Hz]')
+        self.ax_spgr.set_yscale('symlog')
+        self.ax_spgr.set_ylim(self.fmin, self.fmax)
         
         ticks = self.get_yaxis_ticks()
         labels = self.get_yaxis_labels(ticks)
-        plt.yticks(ticks, labels)
+        self.ax_spgr.set_yticks(ticks)
+        self.ax_spgr.set_yticklabels(labels)
 
     #-------------------------------------------------------------------------------
 
     def get_xlabel(self, time_s):
         if time_s <= 60:
-            return 'time [sec]'
+            return 'Time [sec]'
         if time_s <= (5 * 60):
-            return 'time [min:sec]'
-        return 'time [min]'
+            return 'Time [min:sec]'
+        return 'Time [min]'
 
 
     def get_xaxis_ticks(self, time_s):
