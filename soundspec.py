@@ -5,6 +5,7 @@ from scipy import signal
 from scipy.stats import mstats
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import transforms
 import argparse
 import multiprocessing 
 import os.path
@@ -364,9 +365,12 @@ class SpectrogramCreator:
             Sxx = np.log10(Sxx)
         self.logger.debug_message(3, 'Sxx:\n' + str(Sxx))
 
+        self.logger.log_message(audiofile + ': creating projection ...')
+        projection = self.calculate_projection(freqs.size, Sxx)
+
         self.logger.log_message(audiofile + ': generating the image ...')
         plotter = SpectrogramPlotter(self.args, fmin, fmax, self.logger)
-        plotter.plot_spectrogram(t, f, Sxx, audiofile)
+        plotter.plot_spectrogram(t, f, Sxx, projection, audiofile)
         return 0
     
     #-------------------------------------------------------------------------------
@@ -450,7 +454,17 @@ class SpectrogramCreator:
 
         return 0, maximum_spectra
 
-
+    
+    def calculate_projection(self, num_freqs, Sxx):
+        projection = np.empty(num_freqs)
+        self.logger.debug_message(2, 'projection.shape :' + str(projection.shape))
+        for i in range(num_freqs):
+            selected_spectra = Sxx[i]
+            self.logger.debug_message(4, 'selected_spectra.shape: ' + str(selected_spectra.shape))
+            self.logger.debug_message(5, 'selected_spectra: ' + str(selected_spectra))
+            projection[i] = np.amax(selected_spectra)
+        return projection
+    
     #-------------------------------------------------------------------------------
 
     def downscale_sanity_check(self, num_freqs, findex, findex_begin, findex_end):
@@ -500,29 +514,19 @@ class SpectrogramPlotter:
         self.logger = logger
 
 
-    def plot_spectrogram(self, t, f, Sxx, audiofile):
+    def plot_spectrogram(self, t, f, Sxx, projection, audiofile):
         if locks.plot_file_lock:
             locks.plot_file_lock.acquire()
         try:
-            # start with a square Figure
             fig = plt.figure(figsize=(8, 6))
-            # Add a gridspec with 1 row and 2 columns and a ratio of 2 to 7 between
-            # the size of the marginal axes and the main axes in both directions.
-            # Also adjust the subplot parameters for a square plot.
-            gs = fig.add_gridspec(1, 2,  width_ratios=[2, 6])
+            gs = fig.add_gridspec(1, 2,  width_ratios = [2, 6], wspace = 0.02)
 #                      left=0.1, right=0.9, bottom=0.1, top=0.9,
 #                      wspace=0.05, hspace=0.05)
-            self.ax_proj = fig.add_subplot(gs[0])
-            self.ax_proj.set_title('Projection')
-            
-            self.ax_spgr = fig.add_subplot(gs[1])
-            self.ax_spgr.pcolormesh(t, f, Sxx)
-            self.set_xaxis(t)
-            self.set_yaxis()
-            self.ax_spgr.grid(True)
-            self.ax_spgr.set_title('Spectrogram')
+
+            self.__plot_projection(fig, gs, f, projection)
+            self.__plot_spectrogram(fig, gs, t, f, Sxx)
+
             plt.suptitle(os.path.basename(audiofile))
-        
             if self.args.batch:
                 image_file = audiofile + '.png'
                 self.logger.log_message(audiofile + ': create spectrogram ' + os.path.basename(image_file))
@@ -535,31 +539,71 @@ class SpectrogramPlotter:
 
     #-------------------------------------------------------------------------------
 
-    def set_xaxis(self, t):
-        time_s = t[t.size-1]
-        self.ax_spgr.set_xlabel(self.get_xlabel(time_s))
+    def __plot_projection(self, fig, gs, f, projection):
+        ax_proj = fig.add_subplot(gs[0])
+            
+        # rotate plot by 90 degree
+        # see https://stackoverflow.com/questions/22540449/how-can-i-rotate-a-matplotlib-plot-through-90-degrees
+        proj_base = ax_proj.transData
+        rotation = transforms.Affine2D().rotate_deg(90)
+        ax_proj.plot(f, projection, transform = rotation + proj_base)
+            
+        ax_proj.set_title('Projection')
+        self.set_projection_xaxis(ax_proj)
+        self.set_projection_yaxis(ax_proj)
+        ax_proj.grid(True)
 
-        ticks = self.get_xaxis_ticks(time_s)
-        print(ticks)
+
+    def __plot_spectrogram(self, fig, gs, t, f, Sxx):
+        ax_spgr = fig.add_subplot(gs[1])
+        ax_spgr.pcolormesh(t, f, Sxx)
+        self.set_spectrogram_xaxis(ax_spgr, t)
+        self.set_spectrogram_yaxis(ax_spgr)
+        ax_spgr.grid(True)
+        ax_spgr.set_title('Spectrogram')
+            
+    #-------------------------------------------------------------------------------
+        
+    def set_projection_xaxis(self, ax):
+        ax.set_xticks([])
+        ax.set_xlabel('Peak Amplitude')
+    
+    
+    def set_projection_yaxis(self, ax):
+        ax.set_ylabel('Frequency [Hz]')
+        ax.set_ylim(self.fmin, self.fmax)
+        ax.set_yscale('symlog')
+#       ax.get_yaxis().tick_right()
+        ticks = self.get_frequency_ticks()
+        labels = self.get_frequency_labels(ticks, empty=False)
+        ax.set_yticks(ticks)
+        ax.set_yticklabels(labels)
+    
+    
+    def set_spectrogram_xaxis(self, ax, t):
+        time_s = t[t.size-1]
+        ax.set_xlabel(self.get_time_label(time_s))
+
+        ticks = self.get_time_ticks(time_s)
         if ticks != None:
-            labels = self.get_xaxis_labels(time_s, ticks)
-            self.ax_spgr.set_xticks(ticks)
-            self.ax_spgr.set_xticklabels(labels)
+            labels = self.get_time_labels(time_s, ticks)
+            ax.set_xticks(ticks)
+            ax.set_xticklabels(labels)
             
 
-    def set_yaxis(self):
-        self.ax_spgr.set_ylabel('Frequency [Hz]')
-        self.ax_spgr.set_yscale('symlog')
-        self.ax_spgr.set_ylim(self.fmin, self.fmax)
+    def set_spectrogram_yaxis(self, ax):
+#        ax.set_ylabel('Frequency [Hz]')
+        ax.set_yscale('symlog')
+        ax.set_ylim(self.fmin, self.fmax)
         
-        ticks = self.get_yaxis_ticks()
-        labels = self.get_yaxis_labels(ticks)
-        self.ax_spgr.set_yticks(ticks)
-        self.ax_spgr.set_yticklabels(labels)
+        ticks = self.get_frequency_ticks()
+        labels = self.get_frequency_labels(ticks, empty=True)
+        ax.set_yticks(ticks)
+        ax.set_yticklabels(labels)
 
     #-------------------------------------------------------------------------------
 
-    def get_xlabel(self, time_s):
+    def get_time_label(self, time_s):
         if time_s <= 60:
             return 'Time [sec]'
         if time_s <= (5 * 60):
@@ -567,7 +611,7 @@ class SpectrogramPlotter:
         return 'Time [min]'
 
 
-    def get_xaxis_ticks(self, time_s):
+    def get_time_ticks(self, time_s):
         if time_s <= 60:
             return None # use standard x-axis
         num_minutes = time_s / 60
@@ -590,7 +634,7 @@ class SpectrogramPlotter:
         return ticks.tolist()
     
     
-    def get_xaxis_labels(self, time_s, ticks):
+    def get_time_labels(self, time_s, ticks):
         num_minutes = time_s / 60
         if num_minutes > 5: 
             time_format= "%M"       # returns mm
@@ -605,7 +649,7 @@ class SpectrogramPlotter:
         return labels
     
     
-    def get_yaxis_ticks(self):
+    def get_frequency_ticks(self):
         yt = np.arange(10, 100, 10)                                         # creates [10, 20, 30, ... 80, 90]
         yt = np.concatenate((yt, 10 * yt, 100 * yt, 1000 * yt, 10000 * yt)) # extend to 100, 1k, 10k, 100k
         yt = yt[yt <= self.fmax]
@@ -613,15 +657,18 @@ class SpectrogramPlotter:
         return ticks
 
 
-    def get_yaxis_labels(self, ticks):
+    def get_frequency_labels(self, ticks, empty):
         labels = []
         for tick in ticks:
-            if tick >= 1000:
-                label = str(int(tick/1000)) + 'k'
-            else:
-                label = str(int(tick))
-            if label[0] != '1' and label[0] != '2' and label[0] != '5':
+            if empty == True:
                 label = ''
+            else:
+                if tick >= 1000:
+                    label = str(int(tick/1000)) + 'k'
+                else:
+                    label = str(int(tick))
+                if label[0] != '1' and label[0] != '2' and label[0] != '5':
+                    label = ''
             labels.append(label)
         return labels
 
