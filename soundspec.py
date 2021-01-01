@@ -12,6 +12,8 @@ import os.path
 import os
 import subprocess
 import time
+import wave as wv
+import math
 
 # only needed for pyinstaller bug workaround
 #import numpy.random.common
@@ -60,6 +62,7 @@ def get_argument_parser():
     argpar.add_argument('-m', '--maximum', dest='use_maximum', help='use maximum instead of skipping frequencies', action='store_true')
     argpar.add_argument('-p', '--ppi', type=int, help='set print resolution for batch mode (default is 200)', default=200)
     argpar.add_argument('-r', '--resolution', type=int, help='set resolution (default is 1000)', default=1000)
+    argpar.add_argument('-w', '--window', help='set window for FFT (default is blackmanharris)', default='blackmanharris')
 
     # add arguments:
     argpar.add_argument('audiofile', type=str, nargs='+', 
@@ -169,11 +172,11 @@ class SoundSpec:
     
     def process_file(self, audiofile):
         audiofile_reader = AudioFileReader(self.logger)
-        sf, audio = audiofile_reader.read(audiofile)
+        sf, bw, audio = audiofile_reader.read(audiofile)
         # starting from here the code runs concurrently in batch mode
         if sf != None: 
             spectrogram_creator = SpectrogramCreator(self.args, self.logger)
-            spectrogram_creator.create(audiofile, sf, audio)
+            spectrogram_creator.create(audiofile, sf, bw, audio)
             return 0
         else:
             return 1
@@ -210,40 +213,53 @@ class AudioFileReader:
         try:
             if not os.path.exists(audiofile):
                 self.logger.log_message(audiofile + ': not found')
-                return None, None
+                return None, None, None
             if self.is_wav_file(audiofile):
                 wav_file = audiofile
             else:    
                 # convert audiofile into wav_file:
                 wav_file = self.convert_to_wav(audiofile)
                 if wav_file == None:
-                    return None, None
+                    return None, None, None
                 if not os.path.exists(wav_file):
                     self.logger.log_message(audiofile + ': failed to convert into wav format')
-                    return None, None
+                    return None, None, None
                     
             self.logger.log_message(audiofile + ': reading WAV file ...')
             sf, audio = wavfile.read(wav_file) # sf = samplerate in Hz, audio.shape[] = #samples, [#channels (if > 1)]
+            
             num_samples = audio.shape[0]
             num_channels = 1;
             if len(audio.shape) > 1:
                 num_channels = audio.shape[1]
             run_time = num_samples / sf
             run_time_str = time.strftime("%H:%M:%S", time.gmtime(run_time))
+            bit_width = self.get_bit_width(wav_file)
             self.logger.log_message(audiofile + ': ' + str(num_channels) + ' channel(s) at ' + str(sf/1000) + ' kHz samplerate with ' + run_time_str + ' runtime')
-
+        
         except:
             self.logger.log_message(audiofile + ': error reading audio data')
-            return None, None
+            return None, None, None
         finally:
             if wav_file != None and wav_file != audiofile:
                 os.unlink(wav_file)
             if locks.read_file_lock:
                 locks.read_file_lock.release()
-        return sf, audio
+        return sf, bit_width, audio
 
     #-------------------------------------------------------------------------------
 
+    def get_bit_width(self, audiofile):
+        try:
+            wavefile = wv.open(audiofile, 'rb')
+            bw = 8 * wavefile.getsampwidth()
+        except:
+            bw = 16
+        finally:
+            wavefile.close()
+        return bw
+    
+        
     def is_wav_file(self, filename):
         root, ext = os.path.splitext(filename)
         if ext.lower() == '.wav':
@@ -282,7 +298,7 @@ class SpectrogramCreator:
         self.nf = self.args.resolution
 
     
-    def create(self, audiofile, sf, audio):
+    def create(self, audiofile, sf, bw, audio):
         # common sense limits for frequency
         fmin = 10
         if sf < fmin:
@@ -294,7 +310,8 @@ class SpectrogramCreator:
 
         # convert to mono
         sig = np.mean(audio,axis = 1) if (audio.ndim>=2) else audio 
-
+        self.logger.debug_message(2, 'audio range: [' + str(np.amin(np.amin(sig))) + ' .. ' + str(np.amax(np.amax(sig))) + ']')
+        
         # vertical resolution (frequency)
         # number of points per segment; more points = better frequency resolution
         # if equal to sf, then frequency resolution is 1 Hz
@@ -309,15 +326,17 @@ class SpectrogramCreator:
         winfudge = 1 - (run_time / self.nf)
         num_overlap = int(winfudge * npts)
 
+        window_correction = 2.831593 # for blackman harris window
         # create the spectrogram, returns:
         # - f = [0..sf/2], 
         # - t = [0.5 .. run_time-0.5],
         # - Sxx = array[f.size, t.size]
         self.logger.log_message(audiofile + ': calculating FFT ...')
-        f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=num_overlap, mode='magnitude')
+        f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=num_overlap, window = self.args.window, mode='magnitude')
         self.logger.debug_message(6, 'f.shape: ' + str(f.shape))
         self.logger.debug_message(6, 't.shape: ' + str(t.shape))
         self.logger.debug_message(6, 'Sxx.shape: ' + str(Sxx.shape))
+        self.logger.debug_message(2, 'spectrum range: [' + str(np.amin(np.amin(Sxx))) + ' .. ' + str(np.amax(np.amax(Sxx))) + ']')
 
         self.logger.log_message(audiofile + ': downscaling spectra ...')
         # generate an exponential distribution of frequencies
@@ -352,21 +371,24 @@ class SpectrogramCreator:
         f = np.asarray(fnew)
 
         if self.args.use_maximum:
-            num_errors, Sxx = self.scale_down_with_maxima(freqs.size, findex, Sxx)
+            num_errors, Sxxnew = self.scale_down_with_maxima(freqs.size, findex, Sxx)
             if num_errors > 0:
                 return 1
+            Sxx = Sxxnew * window_correction
         else:
             # strip unused frequencies from Sxx
             Sxxnew = Sxx[findex, :]
-            Sxx = Sxxnew
+            Sxx = Sxxnew * window_correction
 
         self.logger.debug_message(1, Sxx.shape)
         if not self.args.use_linear_amplitude:
-            Sxx = np.log10(Sxx)
+            Sxx = self.convert_into_db(Sxx, npts, bw)
+            self.logger.debug_message(2, 'spectrum range in dB: [' + str(np.amax(np.amax(Sxx))) + ' .. ' + str(np.amin(np.amin(Sxx))) + ']')
+
         self.logger.debug_message(3, 'Sxx:\n' + str(Sxx))
 
         self.logger.log_message(audiofile + ': creating projection ...')
-        projection = self.calculate_projection(freqs.size, Sxx)
+        projection = np.amax(Sxx, axis=1)
 
         self.logger.log_message(audiofile + ': generating the image ...')
         plotter = SpectrogramPlotter(self.args, fmin, fmax, self.logger)
@@ -453,18 +475,21 @@ class SpectrogramCreator:
             maximum_spectra[i] = np.amax(selected_spectra, axis=0)
 
         return 0, maximum_spectra
+    
+    #-------------------------------------------------------------------------------
 
-    
-    def calculate_projection(self, num_freqs, Sxx):
-        projection = np.empty(num_freqs)
-        self.logger.debug_message(2, 'projection.shape :' + str(projection.shape))
-        for i in range(num_freqs):
-            selected_spectra = Sxx[i]
-            self.logger.debug_message(4, 'selected_spectra.shape: ' + str(selected_spectra.shape))
-            self.logger.debug_message(5, 'selected_spectra: ' + str(selected_spectra))
-            projection[i] = np.amax(selected_spectra)
-        return projection
-    
+
+    def convert_into_db(self, Sxx, npts, bit_width):
+        max_value = 2 ** (bit_width - 1)
+        Sxx_dB = 20 * np.log10(Sxx / max_value)
+
+        # set lower limit according to FFT gain and bit width
+        fft_gain = self.get_fft_gain(npts)
+        min_value_dB = - (bit_width * 6 + fft_gain)
+        Sxx_dB[Sxx_dB < min_value_dB] = min_value_dB
+        return Sxx_dB   
+        
+        
     #-------------------------------------------------------------------------------
 
     def downscale_sanity_check(self, num_freqs, findex, findex_begin, findex_end):
@@ -493,6 +518,10 @@ class SpectrogramCreator:
                         return 1
         return 0
 
+    def get_fft_gain(self, npts):
+        fft_gain = 3 * math.log(npts) / math.log(2) - 3
+        return fft_gain
+ 
 
     def get_mean(self, values):
         try:
@@ -520,8 +549,6 @@ class SpectrogramPlotter:
         try:
             fig = plt.figure(figsize=(8, 6))
             gs = fig.add_gridspec(1, 2,  width_ratios = [2, 6], wspace = 0.02)
-#                      left=0.1, right=0.9, bottom=0.1, top=0.9,
-#                      wspace=0.05, hspace=0.05)
 
             self.__plot_projection(fig, gs, f, projection)
             self.__plot_spectrogram(fig, gs, t, f, Sxx)
@@ -549,38 +576,42 @@ class SpectrogramPlotter:
         ax_proj.plot(f, projection, transform = rotation + proj_base)
             
         ax_proj.set_title('Projection')
-        self.set_projection_xaxis(ax_proj)
-        self.set_projection_yaxis(ax_proj)
+        self.__set_projection_xaxis(ax_proj)
+        self.__set_projection_yaxis(ax_proj)
         ax_proj.grid(True)
 
 
     def __plot_spectrogram(self, fig, gs, t, f, Sxx):
         ax_spgr = fig.add_subplot(gs[1])
         ax_spgr.pcolormesh(t, f, Sxx)
-        self.set_spectrogram_xaxis(ax_spgr, t)
-        self.set_spectrogram_yaxis(ax_spgr)
+        self.__set_spectrogram_xaxis(ax_spgr, t)
+        self.__set_spectrogram_yaxis(ax_spgr)
         ax_spgr.grid(True)
         ax_spgr.set_title('Spectrogram')
             
     #-------------------------------------------------------------------------------
         
-    def set_projection_xaxis(self, ax):
-        ax.set_xticks([])
+    def __set_projection_xaxis(self, ax):
+        if self.args.use_linear_amplitude:
+            ax.set_xticks([])
+        else:
+            ax.set_xticks(     [0,   20,   40,  60,   80, 100,   120])
+            ax.set_xticklabels(['0', '', '-40', '', '-80', '', '-120'])
         ax.set_xlabel('Peak Amplitude')
     
     
-    def set_projection_yaxis(self, ax):
+    def __set_projection_yaxis(self, ax):
         ax.set_ylabel('Frequency [Hz]')
         ax.set_ylim(self.fmin, self.fmax)
         ax.set_yscale('symlog')
-#       ax.get_yaxis().tick_right()
+        # ax.get_yaxis().tick_right()
         ticks = self.get_frequency_ticks()
         labels = self.get_frequency_labels(ticks, empty=False)
         ax.set_yticks(ticks)
         ax.set_yticklabels(labels)
     
     
-    def set_spectrogram_xaxis(self, ax, t):
+    def __set_spectrogram_xaxis(self, ax, t):
         time_s = t[t.size-1]
         ax.set_xlabel(self.get_time_label(time_s))
 
@@ -591,7 +622,7 @@ class SpectrogramPlotter:
             ax.set_xticklabels(labels)
             
 
-    def set_spectrogram_yaxis(self, ax):
+    def __set_spectrogram_yaxis(self, ax):
 #        ax.set_ylabel('Frequency [Hz]')
         ax.set_yscale('symlog')
         ax.set_ylim(self.fmin, self.fmax)
