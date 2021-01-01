@@ -569,8 +569,8 @@ class SpectrogramPlotter:
         if locks.plot_file_lock:
             locks.plot_file_lock.acquire()
         try:
-            fig = plt.figure(figsize=(8, 6))
-            gs = fig.add_gridspec(1, 2,  width_ratios = [2, 6], wspace = 0.02)
+            fig = plt.figure(figsize=(10, 6))
+            gs = fig.add_gridspec(1, 2,  width_ratios = [2, 8], wspace = 0.02)
 
             self.__plot_projection(fig, gs, f, projection)
             self.__plot_spectrogram(fig, gs, t, f, Sxx)
