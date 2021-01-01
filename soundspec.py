@@ -235,7 +235,8 @@ class AudioFileReader:
             run_time = num_samples / sf
             run_time_str = time.strftime("%H:%M:%S", time.gmtime(run_time))
             bit_width = self.get_bit_width(wav_file)
-            self.logger.log_message(audiofile + ': ' + str(num_channels) + ' channel(s) at ' + str(sf/1000) + ' kHz samplerate with ' + run_time_str + ' runtime')
+            format = str(int(sf/1000)) + '/' + str(bit_width)
+            self.logger.log_message(audiofile + ': ' + str(num_channels) + ' channel(s) at ' + format + ' with ' + run_time_str + ' runtime')
         
         except:
             self.logger.log_message(audiofile + ': error reading audio data')
@@ -250,13 +251,15 @@ class AudioFileReader:
     #-------------------------------------------------------------------------------
 
     def get_bit_width(self, audiofile):
+        wavefile = None
         try:
-            wavefile = wv.open(audiofile, 'rb')
+            wavefile = wv.open(audiofile, 'r')
             bw = 8 * wavefile.getsampwidth()
         except:
-            bw = 16
+            bw = 16 # better this than an exception
         finally:
-            wavefile.close()
+            if wavefile != None:
+                wavefile.close()
         return bw
     
         
@@ -326,7 +329,13 @@ class SpectrogramCreator:
         winfudge = 1 - (run_time / self.nf)
         num_overlap = int(winfudge * npts)
 
-        window_correction = 2.831593 # for blackman harris window
+        # set window correction factor
+        # - this is the factor with which the spectra values must be multiplied 
+        #   to correct for the loss due to the window applied in the FFT
+        window_correction_factor = 2.831593 # for blackman harris window
+        if self.args.window == 'boxcar':
+            window_correction_factor = 2
+            
         # create the spectrogram, returns:
         # - f = [0..sf/2], 
         # - t = [0.5 .. run_time-0.5],
@@ -361,7 +370,8 @@ class SpectrogramCreator:
         for i in range(freqs.size):
             f_ind = (np.abs(f - freqs[i])).argmin()
             findex.append(f_ind)
-        self.logger.debug_message(2, 'findex: len=' + str(len(findex)) + ': ' + str(findex))
+        self.logger.debug_message(2, 'findex: len=' + str(len(findex)))
+        self.logger.debug_message(2, 'findex=' + str(findex))
 
         # keep only frequencies closest to exponential distribution
         # this is usually a massive cropping of the initial FFT data
@@ -374,15 +384,15 @@ class SpectrogramCreator:
             num_errors, Sxxnew = self.scale_down_with_maxima(freqs.size, findex, Sxx)
             if num_errors > 0:
                 return 1
-            Sxx = Sxxnew * window_correction
+            Sxx = Sxxnew * window_correction_factor
         else:
             # strip unused frequencies from Sxx
             Sxxnew = Sxx[findex, :]
-            Sxx = Sxxnew * window_correction
+            Sxx = Sxxnew * window_correction_factor
 
         self.logger.debug_message(1, Sxx.shape)
         if not self.args.use_linear_amplitude:
-            Sxx = self.convert_into_db(Sxx, npts, bw)
+            Sxx = self.convert_into_dB(Sxx, npts, bw)
             self.logger.debug_message(2, 'spectrum range in dB: [' + str(np.amax(np.amax(Sxx))) + ' .. ' + str(np.amin(np.amin(Sxx))) + ']')
 
         self.logger.debug_message(3, 'Sxx:\n' + str(Sxx))
@@ -479,7 +489,7 @@ class SpectrogramCreator:
     #-------------------------------------------------------------------------------
 
 
-    def convert_into_db(self, Sxx, npts, bit_width):
+    def convert_into_dB(self, Sxx, npts, bit_width):
         max_value = 2 ** (bit_width - 1)
         Sxx_dB = 20 * np.log10(Sxx / max_value)
 
@@ -519,7 +529,7 @@ class SpectrogramCreator:
         return 0
 
     def get_fft_gain(self, npts):
-        fft_gain = 3 * math.log(npts) / math.log(2) - 3
+        fft_gain = 3 * math.log(npts) / math.log(2) - 3 # 3dB per doubling
         return fft_gain
  
 
@@ -592,19 +602,23 @@ class SpectrogramPlotter:
     #-------------------------------------------------------------------------------
         
     def __set_projection_xaxis(self, ax):
+        # for anknown reasons pyplot insists that the xscale has the wrong direction
         if self.args.use_linear_amplitude:
+            # crude workaround: just don't display any ticks
             ax.set_xticks([])
         else:
+            # crude workaround: invert the names of the ticks
+            # TODO: calculate the ticks according to the bit width
             ax.set_xticks(     [0,   20,   40,  60,   80, 100,   120])
-            ax.set_xticklabels(['0', '', '-40', '', '-80', '', '-120'])
+            ax.set_xticklabels(['0', '', '-40', '', '-80', '', '-120']) # workaround for negative scale???
         ax.set_xlabel('Peak Amplitude')
     
     
     def __set_projection_yaxis(self, ax):
         ax.set_ylabel('Frequency [Hz]')
-        ax.set_ylim(self.fmin, self.fmax)
         ax.set_yscale('symlog')
-        # ax.get_yaxis().tick_right()
+        ax.set_ylim(self.fmin, self.fmax)
+        # ax.get_yaxis().tick_right()    # show ticks on right side of the plot
         ticks = self.get_frequency_ticks()
         labels = self.get_frequency_labels(ticks, empty=False)
         ax.set_yticks(ticks)
