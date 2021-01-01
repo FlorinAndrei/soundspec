@@ -221,12 +221,20 @@ class AudioFileReader:
                 wav_file = self.convert_to_wav(audiofile)
                 if wav_file == None:
                     return None, None, None
-                if not os.path.exists(wav_file):
-                    self.logger.log_message(audiofile + ': failed to convert into wav format')
-                    return None, None, None
                     
             self.logger.log_message(audiofile + ': reading WAV file ...')
-            sf, audio = wavfile.read(wav_file) # sf = samplerate in Hz, audio.shape[] = #samples, [#channels (if > 1)]
+            try:
+                sf, audio = wavfile.read(wav_file) # sf = samplerate in Hz, audio.shape[] = #samples, [#channels (if > 1)]
+            except:
+                if wav_file != audiofile:
+                    self.logger.log_message(audiofile + ': error reading audio data')
+                    return None, None, None
+                # try again converting a possible 24 bit wav to 16 bit which can be handled
+                self.logger.log_message(audiofile + ': reading failed, try conversion to 16 Bit ...')
+                wav_file = self.convert_to_wav(audiofile)
+                if wav_file == None:
+                    return None, None, None
+                sf, audio = wavfile.read(wav_file) # sf = samplerate in Hz, audio.shape[] = #samples, [#channels (if > 1)]
             
             num_samples = audio.shape[0]
             num_channels = 1;
@@ -253,10 +261,11 @@ class AudioFileReader:
     def get_bit_width(self, audiofile):
         wavefile = None
         try:
-            wavefile = wv.open(audiofile, 'r')
+            wavefile = wv.open(audiofile, 'rb')
             bw = 8 * wavefile.getsampwidth()
         except:
-            bw = 16 # better this than an exception
+            self.logger.log_message(audiofile + ': cannot determine bit width, assume 16')
+            bw = 16 # 24 would be OK since this is probably the reason why it failed, but scipy.io.wavfile handles 24 bit files as 16 bit
         finally:
             if wavefile != None:
                 wavefile.close()
@@ -272,7 +281,7 @@ class AudioFileReader:
 
     def convert_to_wav(self, audiofile):
         # convert audiofile into wav_file:
-        self.logger.log_message(audiofile + ': converting into wav format ...')
+        self.logger.log_message(audiofile + ': converting into 16 bit wav format ...')
         wav_file = audiofile + '_tmp-soundspec.wav'
         if os.path.exists(wav_file):
             os.unlink(wav_file)
@@ -285,6 +294,9 @@ class AudioFileReader:
             return None
         except:
             self.logger.log_message(audiofile + ': failed to convert into wav format: unknown exeption')
+            return None
+        if not os.path.exists(wav_file):
+            self.logger.log_message(audiofile + ': failed to convert into wav format: missing file')
             return None
         return wav_file
     
