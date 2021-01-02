@@ -323,12 +323,9 @@ class SpectrogramCreator:
         self.logger.log_message(audiofile + ': processing ...')
         fmax = self.determine_max_freq_to_show(sf)
 
-        # convert to mono
-        sig = np.mean(audio,axis = 1) if (audio.ndim>=2) else audio 
-        self.logger.debug_message(2, 'audio range: [' + str(np.amin(np.amin(sig))) + ' .. ' + str(np.amax(np.amax(sig))) + ']')
+        spg = Spectrogram(self.args, self.logger)
+        f, t, Sxx = spg.create_spectrogram(audiofile, audio, sf)
         
-        window_correction_factor = self.get_window_function_correction_factor()
-        f, t, Sxx = self.create_one_spectrogram(audiofile, sig, sf, audio.shape[0])
 
         self.logger.log_message(audiofile + ': downscaling spectra ...')
         # generate an exponential distribution of frequencies
@@ -367,11 +364,11 @@ class SpectrogramCreator:
             num_errors, Sxxnew = self.scale_down_with_maxima(freqs.size, findex, Sxx)
             if num_errors > 0:
                 return 1
-            Sxx = Sxxnew * window_correction_factor
+            Sxx = Sxxnew * self.get_window_function_correction_factor()
         else:
             # strip unused frequencies from Sxx
             Sxxnew = Sxx[findex, :]
-            Sxx = Sxxnew * window_correction_factor
+            Sxx = Sxxnew * self.get_window_function_correction_factor()
 
         self.logger.debug_message(1, Sxx.shape)
         if not self.args.use_linear_amplitude:
@@ -399,33 +396,6 @@ class SpectrogramCreator:
         return window_correction_factor
     
     
-    def create_one_spectrogram(self, audiofile, sig, sf, num_samples):
-        # vertical resolution (frequency)
-        # number of points per segment; more points = better frequency resolution
-        # if equal to sf, then frequency resolution is 1 Hz
-        npts = int(sf)
-
-        # horizontal resolution (time)
-        # fudge factor to keep the number of frequency samples close to self.nf
-        # (assuming an image width of about self.nf px)
-        # negative values ought to be fine
-        run_time = num_samples / sf
-        winfudge = 1 - (run_time / self.nf)
-        num_overlap = int(winfudge * npts)
-
-        # create the spectrogram, returns:
-        # - f = [0..sf/2], 
-        # - t = [0.5 .. run_time-0.5],
-        # - Sxx = array[f.size, t.size]
-        self.logger.log_message(audiofile + ': calculating FFT ...')
-        f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=num_overlap, window = self.args.window, mode='magnitude')
-        self.logger.debug_message(6, 'f.shape: ' + str(f.shape))
-        self.logger.debug_message(6, 't.shape: ' + str(t.shape))
-        self.logger.debug_message(6, 'Sxx.shape: ' + str(Sxx.shape))
-        self.logger.debug_message(2, 'spectrum range: [' + str(np.amin(np.amin(Sxx))) + ' .. ' + str(np.amax(np.amax(Sxx))) + ']')
-        return f, t, Sxx
-
-
     def determine_max_freq_to_show(self, sf):
         fmax = 20000
         if sf >= 48000:
@@ -562,6 +532,62 @@ class SpectrogramCreator:
             np.seterr(divide = 'warn')
         return mean_value
        
+
+class Spectrogram:
+  
+    def __init__(self, options, logger):
+        self.args = options
+        self.logger = logger
+        
+        # FFT at high resolution makes way too many frequencies
+        # set some lower number of frequencies we would like to keep
+        # final result will be even smaller after pruning
+        self.nf = self.args.resolution
+
+    
+    def create_spectrogram(self, audiofile, audio, sf):
+        if audio.ndim > 1:
+            sig = np.mean(audio, axis = 1)  # convert to mono
+            self.logger.debug_message(2, 'audio range: [' + str(np.amin(np.amin(sig))) + ' .. ' + str(np.amax(np.amax(sig))) + ']')
+            spg = Spectrogram(self.args, self.logger)
+            return self.__create_mono_spectrogram(audiofile, sig, sf, audio.shape[0])
+        else:
+            self.logger.debug_message(2, 'audio range: [' + str(np.amin(np.amin(audio))) + ' .. ' + str(np.amax(np.amax(audio))) + ']')
+            spg = Spectrogram(self.args, self.logger)
+            return self.__create_mono_spectrogram(audiofile, audio, sf, audio.shape[0])
+ 
+       
+    def __create_mono_spectrogram(self, audiofile, sig, sf, num_samples):
+        # vertical resolution (frequency)
+        # number of points per segment; more points = better frequency resolution
+        # if equal to sf, then frequency resolution is 1 Hz
+        npts = int(sf)
+
+        # horizontal resolution (time)
+        num_overlap = self.get_number_of_overlaps(sf, npts, num_samples)
+
+        # create the spectrogram, returns:
+        # - f = [0..sf/2], 
+        # - t = [0.5 .. run_time-0.5],
+        # - Sxx = array[f.size, t.size]
+        self.logger.log_message(audiofile + ': calculating FFT ...')
+        f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=num_overlap, window = self.args.window, mode='magnitude')
+        self.logger.debug_message(6, 'f.shape: ' + str(f.shape))
+        self.logger.debug_message(6, 't.shape: ' + str(t.shape))
+        self.logger.debug_message(6, 'Sxx.shape: ' + str(Sxx.shape))
+        self.logger.debug_message(2, 'spectrum range: [' + str(np.amin(np.amin(Sxx))) + ' .. ' + str(np.amax(np.amax(Sxx))) + ']')
+        return f, t, Sxx
+       
+       
+    def get_number_of_overlaps(self, sf, npts, num_samples):
+        # fudge factor to keep the number of frequency samples close to self.nf
+        # (assuming an image width of about self.nf px)
+        # negative values ought to be fine
+        run_time = num_samples / sf
+        winfudge = 1 - (run_time / self.nf)
+        num_overlap = int(winfudge * npts)  # = (1 - (num_samples / sf / self.nf)) * sf
+        return num_overlap
+    
 
 class SpectrogramPlotter:
     
