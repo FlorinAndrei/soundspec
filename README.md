@@ -49,17 +49,7 @@ You may also use the batchmode with option -b:
 soundspec.py -b "C:\Users\darkstar\Music\Bananas album\*.wav"
 ```
 
-In this case the app uses all available cores to speed up processing which leads to 100% CPU load. If this is not desired you may specifiy how many cores the app may use with option -c <num_cores>:
-
-```
-soundspec.py -b -c2 "C:\Users\darkstar\Music\Bananas album\*.wav"
-```
-
-In batchmode the option -p <ppi> allows to set the ppi of the graphic saved on disk. The default is 200 which leads to a file size of approximately 1 MB. Reduce the number to reduce the file size:
-
-```
-soundspec.py -b -p150 "C:\Users\darkstar\Music\Bananas album\*.wav"
-```
+The batchmode uses all available cores to speed up processing which leads to 100% CPU load and may even bring your system into heavy swapping if memory is not sufficient. In this case use option -c to reduce the number of cores used (see below in chapter Batchmode Options, as well for other options).
 
 There's no GUI at all in batch mode. Almost any audio file format is supported in this mode, including MP3, M4A, FLAC, etc. Feel free to mix and match different file types.
 
@@ -92,6 +82,33 @@ You must run it from a unix shell:
 - Open a terminal application, navigate to the place where you've extracted the zip archive, and run the app as shown above. 
 - Provide the full path to audio files or to folders containing audio files. If you provide a folder `soundspec` processes all audio files in this folders and all its nested subfolders.
 - Use double quotes if the path names contain any blanks.
+
+## Common options
+
+### -d <debug_level>
+This option sets the debug level (a number greater than 0). The higher the number the more debug messages are printed and the slower the app performs.
+
+### -w <window>
+This options sets the window (a string) for the fourier transformation. The default is 'blackmanharris'. See this page for all supported window types:
+
+https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.get_window.html#scipy.signal.get_window
+
+## Batchmode options
+
+### -c <num_cores>
+In batchmode the app uses all available cores to speed up processing which leads to 100% CPU load and may even bring your system into heavy swapping if memory is not sufficient. If this happens you may specifiy how many cores the app may use with option -c <num_cores>:
+
+```
+soundspec.py -b -c 2 "C:\Users\darkstar\Music\Bananas album\*.wav"
+```
+
+### -p <ppi> 
+This option allows to set the ppi of the graphic saved on disk. The default is 200 which leads to a file size of approximately more than 1 MB. Reduce the number to reduce the file size:
+
+```
+soundspec.py -b -p 150 "C:\Users\darkstar\Music\Bananas album\*.wav"
+```
+
 
 ## Output example
 Here's an output sample from running the app on a WAV file:
