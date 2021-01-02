@@ -49,7 +49,7 @@ def main():
 ####################################################################################
 
 def get_argument_parser():
-    argpar = argparse.ArgumentParser(description="soundspec v0.1.7 - generate spectrogram from sound file")
+    argpar = argparse.ArgumentParser(description="soundspec v0.1.8 - generate spectrogram from sound file")
     num_cores_avail = multiprocessing.cpu_count()
     
     # add options:
@@ -546,31 +546,39 @@ class Spectrogram:
 
     
     def create_spectrogram(self, audiofile, audio, sf):
+        self.logger.log_message(audiofile + ': calculating FFT ...')
         if audio.ndim > 1:
-            sig = np.mean(audio, axis = 1)  # convert to mono
-            self.logger.debug_message(2, 'audio range: [' + str(np.amin(np.amin(sig))) + ' .. ' + str(np.amax(np.amax(sig))) + ']')
-            spg = Spectrogram(self.args, self.logger)
-            return self.__create_mono_spectrogram(audiofile, sig, sf, audio.shape[0])
+            f_array = []
+            t_array = []
+            s_array = []
+            for i in range(audio.ndim):
+                channel = audio[:, i]
+                self.logger.debug_message(2, 'audio range: [' + str(np.amin(np.amin(channel))) + ' .. ' + str(np.amax(np.amax(channel))) + ']')
+                f, t, Sxx = self.__create_mono_spectrogram(audiofile, channel, sf)
+                f_array.append(f)
+                t_array.append(t)
+                s_array.append(Sxx)
+            self.logger.log_message(audiofile + ': converting to mono ...')
+            spectrum = np.sum(np.asarray(s_array), axis=0) / audio.ndim # sum over the spectra, scaled back according to the number of channels
+            return np.asarray(f_array[0]), np.asarray(t_array[0]), spectrum
         else:
             self.logger.debug_message(2, 'audio range: [' + str(np.amin(np.amin(audio))) + ' .. ' + str(np.amax(np.amax(audio))) + ']')
-            spg = Spectrogram(self.args, self.logger)
-            return self.__create_mono_spectrogram(audiofile, audio, sf, audio.shape[0])
+            return self.__create_mono_spectrogram(audiofile, audio, sf)
  
        
-    def __create_mono_spectrogram(self, audiofile, sig, sf, num_samples):
+    def __create_mono_spectrogram(self, audiofile, sig, sf):
         # vertical resolution (frequency)
         # number of points per segment; more points = better frequency resolution
         # if equal to sf, then frequency resolution is 1 Hz
         npts = int(sf)
 
         # horizontal resolution (time)
-        num_overlap = self.get_number_of_overlaps(sf, npts, num_samples)
+        num_overlap = self.get_number_of_overlaps(sf, npts, len(sig))
 
         # create the spectrogram, returns:
         # - f = [0..sf/2], 
         # - t = [0.5 .. run_time-0.5],
         # - Sxx = array[f.size, t.size]
-        self.logger.log_message(audiofile + ': calculating FFT ...')
         f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=num_overlap, window = self.args.window, mode='magnitude')
         self.logger.debug_message(6, 'f.shape: ' + str(f.shape))
         self.logger.debug_message(6, 't.shape: ' + str(t.shape))
