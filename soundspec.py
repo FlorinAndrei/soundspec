@@ -327,37 +327,8 @@ class SpectrogramCreator:
         sig = np.mean(audio,axis = 1) if (audio.ndim>=2) else audio 
         self.logger.debug_message(2, 'audio range: [' + str(np.amin(np.amin(sig))) + ' .. ' + str(np.amax(np.amax(sig))) + ']')
         
-        # vertical resolution (frequency)
-        # number of points per segment; more points = better frequency resolution
-        # if equal to sf, then frequency resolution is 1 Hz
-        npts = int(sf)
-
-        # horizontal resolution (time)
-        # fudge factor to keep the number of frequency samples close to self.nf
-        # (assuming an image width of about self.nf px)
-        # negative values ought to be fine
-        num_samples = audio.shape[0]
-        run_time = num_samples / sf
-        winfudge = 1 - (run_time / self.nf)
-        num_overlap = int(winfudge * npts)
-
-        # set window correction factor
-        # - this is the factor with which the spectra values must be multiplied 
-        #   to correct for the loss due to the window applied in the FFT
-        window_correction_factor = 2.831593 # for blackman harris window
-        if self.args.window == 'boxcar':
-            window_correction_factor = 2
-            
-        # create the spectrogram, returns:
-        # - f = [0..sf/2], 
-        # - t = [0.5 .. run_time-0.5],
-        # - Sxx = array[f.size, t.size]
-        self.logger.log_message(audiofile + ': calculating FFT ...')
-        f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=num_overlap, window = self.args.window, mode='magnitude')
-        self.logger.debug_message(6, 'f.shape: ' + str(f.shape))
-        self.logger.debug_message(6, 't.shape: ' + str(t.shape))
-        self.logger.debug_message(6, 'Sxx.shape: ' + str(Sxx.shape))
-        self.logger.debug_message(2, 'spectrum range: [' + str(np.amin(np.amin(Sxx))) + ' .. ' + str(np.amax(np.amax(Sxx))) + ']')
+        window_correction_factor = self.get_window_function_correction_factor()
+        f, t, Sxx = self.create_one_spectrogram(audiofile, sig, sf, audio.shape[0])
 
         self.logger.log_message(audiofile + ': downscaling spectra ...')
         # generate an exponential distribution of frequencies
@@ -404,7 +375,7 @@ class SpectrogramCreator:
 
         self.logger.debug_message(1, Sxx.shape)
         if not self.args.use_linear_amplitude:
-            Sxx = self.convert_into_dB(Sxx, npts, bw)
+            Sxx = self.convert_into_dB(Sxx, sf, bw)
             self.logger.debug_message(2, 'spectrum range in dB: [' + str(np.amax(np.amax(Sxx))) + ' .. ' + str(np.amin(np.amin(Sxx))) + ']')
 
         self.logger.debug_message(3, 'Sxx:\n' + str(Sxx))
@@ -418,6 +389,42 @@ class SpectrogramCreator:
         return 0
     
     #-------------------------------------------------------------------------------
+
+    def get_window_function_correction_factor(self):
+        # this is the factor with which the spectra values must be multiplied 
+        # to correct for the loss due to the window applied in the FFT
+        window_correction_factor = 2.831593 # for blackman harris window
+        if self.args.window == 'boxcar':
+            window_correction_factor = 2
+        return window_correction_factor
+    
+    
+    def create_one_spectrogram(self, audiofile, sig, sf, num_samples):
+        # vertical resolution (frequency)
+        # number of points per segment; more points = better frequency resolution
+        # if equal to sf, then frequency resolution is 1 Hz
+        npts = int(sf)
+
+        # horizontal resolution (time)
+        # fudge factor to keep the number of frequency samples close to self.nf
+        # (assuming an image width of about self.nf px)
+        # negative values ought to be fine
+        run_time = num_samples / sf
+        winfudge = 1 - (run_time / self.nf)
+        num_overlap = int(winfudge * npts)
+
+        # create the spectrogram, returns:
+        # - f = [0..sf/2], 
+        # - t = [0.5 .. run_time-0.5],
+        # - Sxx = array[f.size, t.size]
+        self.logger.log_message(audiofile + ': calculating FFT ...')
+        f, t, Sxx = signal.spectrogram(sig, sf, nperseg=npts, noverlap=num_overlap, window = self.args.window, mode='magnitude')
+        self.logger.debug_message(6, 'f.shape: ' + str(f.shape))
+        self.logger.debug_message(6, 't.shape: ' + str(t.shape))
+        self.logger.debug_message(6, 'Sxx.shape: ' + str(Sxx.shape))
+        self.logger.debug_message(2, 'spectrum range: [' + str(np.amin(np.amin(Sxx))) + ' .. ' + str(np.amax(np.amax(Sxx))) + ']')
+        return f, t, Sxx
+
 
     def determine_max_freq_to_show(self, sf):
         fmax = 20000
