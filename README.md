@@ -85,6 +85,9 @@ You must run it from a unix shell:
 
 ## Common options
 
+### -C <channel>
+This option defines which channel (number 1,2, ...) shall be processed in a multi channel file. The default is to process all channels and convert them to a mono spectrogram
+
 ### -d <debug_level>
 This option sets the debug level (a number greater than 0). The higher the number the more debug messages are printed and the slower the app performs.
 
