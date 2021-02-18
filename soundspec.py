@@ -53,6 +53,8 @@ def get_argument_parser():
     num_cores_avail = multiprocessing.cpu_count()
     
     # add options:
+    argpar.add_argument('-a', '--amplitude-projection', dest='add_amplitude_projection', help='add amplitude projection', 
+                        action='store_true')
     argpar.add_argument('-b', '--batch', help='batch run, no display, save image to disk', action='store_true')
     argpar.add_argument('-c', type=int, dest='num_cores', default = num_cores_avail,
                         help='number of cores to use, default is ' + str(num_cores_avail) + 
@@ -358,18 +360,27 @@ class SpectrogramCreator:
         Sxx = Sxxnew
 
         self.logger.debug_message2(1, 'Sxx.shape: ', Sxx.shape)
+        
+        if self.args.add_amplitude_projection:
+            self.logger.log_message(audiofile + ': creating amplitude projection ...')
+#            max_possible_value = 2 ** (bw - 1)
+#            percent_correction = 100.0 / max_possible_value
+            projection_ampl = np.amax(Sxx, axis=0) # * percent_correction # in%
+        else:
+            projection_ampl = None
+
         if not self.args.use_linear_amplitude:
             Sxx = self.__convert_into_dB(Sxx, sf, bw)
             self.logger.debug_message_range(2, 'spectrum range in dB: ', Sxx)
 
         self.logger.debug_message2(3, 'Sxx:\n', Sxx)
 
-        self.logger.log_message(audiofile + ': creating projection ...')
-        projection = np.amax(Sxx, axis=1)
+        self.logger.log_message(audiofile + ': creating frequency projection ...')
+        projection_fr = np.amax(Sxx, axis=1)
 
         self.logger.log_message(audiofile + ': generating the image ...')
         plotter = SpectrogramPlotter(self.args, fmin, fmax, self.logger)
-        plotter.plot_spectrogram(t, f, Sxx, projection, audiofile)
+        plotter.plot_spectrogram(t, f, Sxx, projection_fr, projection_ampl, audiofile)
         return 0 # no error
     
     #-------------------------------------------------------------------------------
@@ -621,15 +632,26 @@ class SpectrogramPlotter:
         self.logger = logger
 
 
-    def plot_spectrogram(self, t, f, Sxx, projection, audiofile):
+    def plot_spectrogram(self, t, f, Sxx, projection_fr, projection_ampl, audiofile):
         if locks.plot_file_lock:
             locks.plot_file_lock.acquire()
         try:
-            fig = plt.figure(figsize=(10, 6))
-            gs = fig.add_gridspec(1, 2,  width_ratios = [2, 8], wspace = 0.02)
+            if self.args.add_amplitude_projection:
+                fig = plt.figure(figsize = (10, 8))
+                gs = fig.add_gridspec(ncols = 2, nrows = 2,  
+                                      width_ratios = [2, 8], wspace = 0.02,
+                                      height_ratios = [1.8, 6.2], hspace = 0.1)
 
-            self.__plot_projection(fig, gs, f, projection)
-            self.__plot_spectrogram(fig, gs, t, f, Sxx)
+                self.__plot_amplitude_projection(fig, gs[0, 1], t, projection_ampl)
+                self.__plot_frequency_projection(fig, gs[1, 0], f, projection_fr)
+                self.__plot_spectrogram(fig, gs[1, 1], t, f, Sxx)
+            else:
+                fig = plt.figure(figsize = (10, 6))
+                gs = fig.add_gridspec(ncols = 2, nrows = 1,  
+                                      width_ratios = [2, 8], wspace = 0.02)
+
+                self.__plot_frequency_projection(fig, gs[0], f, projection_fr)
+                self.__plot_spectrogram(fig, gs[1], t, f, Sxx)
 
             plt.suptitle(self.__get_plot_title(audiofile))
             if self.args.batch:
@@ -644,23 +666,33 @@ class SpectrogramPlotter:
 
     #-------------------------------------------------------------------------------
 
-    def __plot_projection(self, fig, gs, f, projection):
-        ax_proj = fig.add_subplot(gs[0])
+    def __plot_amplitude_projection(self, fig, pos, t, projection):
+        ax_a_proj = fig.add_subplot(pos)
+        ax_a_proj.plot(t, projection)
+        ax_a_proj.fill_between(t, projection)
+        ax_a_proj.set_title('Amplitude over Time')
+        self.__set_amplitude_projection_xaxis(ax_a_proj, t)
+        self.__set_amplitude_projection_yaxis(ax_a_proj)
+        ax_a_proj.grid(True)
+
+
+    def __plot_frequency_projection(self, fig, pos, f, projection):
+        ax_f_proj = fig.add_subplot(pos)
             
         # rotate plot by 90 degree
         # see https://stackoverflow.com/questions/22540449/how-can-i-rotate-a-matplotlib-plot-through-90-degrees
-        proj_base = ax_proj.transData
+        proj_base = ax_f_proj.transData
         rotation = transforms.Affine2D().rotate_deg(90)
-        ax_proj.plot(f, projection, transform = rotation + proj_base)
+        ax_f_proj.plot(f, projection, transform = rotation + proj_base)
             
-        ax_proj.set_title('Projection')
-        self.__set_projection_xaxis(ax_proj)
-        self.__set_projection_yaxis(ax_proj)
-        ax_proj.grid(True)
+        ax_f_proj.set_title('Frequency Response')
+        self.__set_frequency_projection_xaxis(ax_f_proj)
+        self.__set_frequency_projection_yaxis(ax_f_proj)
+        ax_f_proj.grid(True)
 
 
-    def __plot_spectrogram(self, fig, gs, t, f, Sxx):
-        ax_spgr = fig.add_subplot(gs[1])
+    def __plot_spectrogram(self, fig, pos, t, f, Sxx):
+        ax_spgr = fig.add_subplot(pos)
         ax_spgr.pcolormesh(t, f, Sxx)
         self.__set_spectrogram_xaxis(ax_spgr, t)
         self.__set_spectrogram_yaxis(ax_spgr)
@@ -676,7 +708,24 @@ class SpectrogramPlotter:
     
     #-------------------------------------------------------------------------------
         
-    def __set_projection_xaxis(self, ax):
+    def __set_amplitude_projection_xaxis(self, ax, t):
+        time_s = t[t.size-1]
+        ax.set_xlim(0, time_s)
+
+        ticks = self.__get_time_ticks(time_s)
+        if ticks != None:
+            labels = self.__get_time_labels(time_s, ticks, empty=True)
+            ax.set_xticks(ticks)
+            ax.set_xticklabels(labels)
+    
+    
+    def __set_amplitude_projection_yaxis(self, ax):
+        ax.set_ylabel('Level')
+        ax.set_ylim(0, None)    # for linear level
+#        ax.set_ylim(-120, 0)    # for level in dB
+    
+    
+    def __set_frequency_projection_xaxis(self, ax):
         # for anknown reasons pyplot insists that the xscale has the wrong direction
         if self.args.use_linear_amplitude:
             # crude workaround: just don't display any ticks
@@ -689,7 +738,7 @@ class SpectrogramPlotter:
         ax.set_xlabel('Peak Amplitude')
     
     
-    def __set_projection_yaxis(self, ax):
+    def __set_frequency_projection_yaxis(self, ax):
         ax.set_ylabel('Frequency [Hz]')
         ax.set_yscale('symlog')
         ax.set_ylim(self.fmin, self.fmax)
@@ -706,7 +755,7 @@ class SpectrogramPlotter:
 
         ticks = self.__get_time_ticks(time_s)
         if ticks != None:
-            labels = self.__get_time_labels(time_s, ticks)
+            labels = self.__get_time_labels(time_s, ticks, empty=False)
             ax.set_xticks(ticks)
             ax.set_xticklabels(labels)
             
@@ -754,7 +803,7 @@ class SpectrogramPlotter:
         return ticks.tolist()
     
     
-    def __get_time_labels(self, time_s, ticks):
+    def __get_time_labels(self, time_s, ticks, empty):
         num_minutes = time_s / 60
         if num_minutes > 5: 
             time_format= "%M"       # returns mm
@@ -762,9 +811,12 @@ class SpectrogramPlotter:
             time_format = "%M:%S"   # returns mm:ss
         labels = []
         for tick in ticks:
-            label = time.strftime(time_format, time.gmtime(tick))
-            if label[0] == '0':
-                label = label[1:]   # strip leading 0
+            if empty == True:
+                label = ''
+            else:
+                label = time.strftime(time_format, time.gmtime(tick))
+                if label[0] == '0':
+                    label = label[1:]   # strip leading 0
             labels.append(label)
         return labels
     
