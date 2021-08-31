@@ -9,12 +9,6 @@ The core part of the script is the Fourier transform done via `scipy.signal.spec
 
 Currently, the frequency resolution is about 1 Hz (in the bottom part of the spectrum), and time resolution is about 1 second. Details finer than those limits will seem smeared. Resolution could be increased, but at the cost of increasing the run time of the app.
 
-## For Windows 10 users (Mac version will follow soon, I hope)
-
-If you don't want to mess with Python scripting, there's an .exe for Windows you could download. Click the [releases](https://github.com/FlorinAndrei/soundspec/releases) link at the top of the page and download the most recent version. Extract the zip archive in some convenient folder - I prefer something like `C:\opt\soundspec` but that's up to you.
-
-Within the archive you'll find two executables: `soundspec.exe` and `soundspec-batch.bat`.
-
 ### Analyzing one file at a time
 
 `soundspec.exe` is for making the spectrum of a one or more files. It only works on WAV files. Example:
@@ -67,6 +61,10 @@ Install `ffmpeg` (without it only WAV files are supported):
 ```
 sudo apt install ffmpeg
 ```
+
+### For Windows users
+
+Some of the older releases have an .exe version you could try to use. But right now the preferred way to run soundspec is as a Python script.
 
 ### Analyzing files
 
