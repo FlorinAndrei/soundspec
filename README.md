@@ -1,6 +1,10 @@
 # soundspec
 spectrum visualizer for audio files; uses the Fourier transform
 
+Discussion thread about this app on the Audio Science Review forum:
+
+https://www.audiosciencereview.com/forum/index.php?threads/simple-app-to-visualize-the-spectrum-of-a-whole-song-or-many-songs-in-batch-mode-from-start-to-end-in-one-image-bonus-remember-why-so-serious.8462/
+
 Requires Python 3 and a few typical number crunching modules. Install the modules and run the `soundspec.py` script as is. It should be self-explanatory. It works on these type of files: WAV, FLAC, MP3, MP4, MKV, AVI, OGG, WEBM. It uses ffmpeg to convert files other than WAV to WAV. If your file type is not supported convert it to WAV first with ffmpeg or VLC.
 
 There's an .sh file and a .bat file for batch processing - analyzing many files with one command. Those require ffmpeg, and can analyze any type of audio file - MP3, M4A, FLAC, etc, if it's supported by ffmpeg, it will probably work.
@@ -130,12 +134,6 @@ It's the spectrum of the song ['Why So Serious?'](https://www.youtube.com/watch?
 
 The song is semi-famous among "audiophile" enthusiasts, where it is considered a good test of bass response for audio systems. The portion of interest begins shortly after 200 sec (3 min 24 sec, more or less). You can see a lot of energy is focused between 30 Hz and 40 Hz. While pretty low, these are not actually extremely low frequencies - there are songs out there with deeper bass, closer to 20 Hz in some cases. But if your speakers or headphones can play those notes, they are alright.
 
-## Notes
-
-Discussion thread about this app on the Audio Science Review forum:
-
-https://www.audiosciencereview.com/forum/index.php?threads/simple-app-to-visualize-the-spectrum-of-a-whole-song-or-many-songs-in-batch-mode-from-start-to-end-in-one-image-bonus-remember-why-so-serious.8462/
-
-### Multiprocessing
+## Multiprocessing
 
 To speed up creation of multiple spectrograms in batch mode `soundspec` uses all available CPU cores to process the data in parallel. Reading is not parallelized but running many cores at the same time means that also the audio data for each core must be held in memory at the same time. If there are many large audio files the memory may not be sufficient. In this case run `soundspec` with option `-c <N>` to use only <N> cores or `-c 1` to force single processing mode.
