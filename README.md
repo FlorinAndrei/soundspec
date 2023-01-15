@@ -5,6 +5,10 @@ Discussion thread about this app on the Audio Science Review forum:
 
 https://www.audiosciencereview.com/forum/index.php?threads/simple-app-to-visualize-the-spectrum-of-a-whole-song-or-many-songs-in-batch-mode-from-start-to-end-in-one-image-bonus-remember-why-so-serious.8462/
 
+Article on Medium inspired by the project:
+
+https://medium.com/towards-data-science/data-has-many-periodic-components-you-need-to-visualize-treat-it-like-audio-dd9569e2a774
+
 Requires Python 3 and a few typical number crunching modules. Install the modules and run the `soundspec.py` script as is. It should be self-explanatory. It works on these type of files: WAV, FLAC, MP3, MP4, MKV, AVI, OGG, WEBM. It uses ffmpeg to convert files other than WAV to WAV. If your file type is not supported convert it to WAV first with ffmpeg or VLC.
 
 There's an .sh file and a .bat file for batch processing - analyzing many files with one command. Those require ffmpeg, and can analyze any type of audio file - MP3, M4A, FLAC, etc, if it's supported by ffmpeg, it will probably work.
