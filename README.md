@@ -5,7 +5,7 @@ Discussion thread about this app on the Audio Science Review forum:
 
 https://www.audiosciencereview.com/forum/index.php?threads/simple-app-to-visualize-the-spectrum-of-a-whole-song-or-many-songs-in-batch-mode-from-start-to-end-in-one-image-bonus-remember-why-so-serious.8462/
 
-Article on Medium inspired by the project:
+Article on Medium inspired by the project, also describes the main part of the code:
 
 https://medium.com/towards-data-science/data-has-many-periodic-components-you-need-to-visualize-treat-it-like-audio-dd9569e2a774
 
