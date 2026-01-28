@@ -1,6 +1,8 @@
 # soundspec
 spectrum visualizer for audio files; uses the Fourier transform
 
+This app is not maintained anymore. A new version, written in Go, is available here: https://github.com/FlorinAndrei/soundspec-go
+
 Discussion thread about this app on the Audio Science Review forum:
 
 https://www.audiosciencereview.com/forum/index.php?threads/simple-app-to-visualize-the-spectrum-of-a-whole-song-or-many-songs-in-batch-mode-from-start-to-end-in-one-image-bonus-remember-why-so-serious.8462/
